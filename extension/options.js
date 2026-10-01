@@ -1,0 +1,3 @@
+const url=document.getElementById("url"),token=document.getElementById("token"),status=document.getElementById("status");
+chrome.storage.local.get(["bridgeUrl","bridgeToken"]).then(v=>{url.value=v.bridgeUrl||"";token.value=v.bridgeToken||"";});
+document.getElementById("save").addEventListener("click",async()=>{const bridgeUrl=url.value.trim().replace(/\/$/,""),bridgeToken=token.value.trim();if(!/^https:\/\//i.test(bridgeUrl)||!bridgeToken){status.textContent="Enter an HTTPS Railway URL and token.";return;}await chrome.storage.local.set({bridgeUrl,bridgeToken});status.textContent="Saved. The extension will connect automatically.";});
