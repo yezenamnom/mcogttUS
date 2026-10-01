@@ -49,7 +49,7 @@ function callDesktop(command, args = {}, timeoutMs = 30000) {
 }
 
 function makeMcpServer() {
-  const server = new McpServer({ name: "gpt-us-browser-desktop", version: "0.7.13" });
+  const server = new McpServer({ name: "gpt-us-browser-desktop", version: "0.7.14" });
 
   server.registerTool("get_page", {
     description: "Read the active Comet tab: title, URL, visible text, and interactive elements.",
@@ -72,50 +72,69 @@ function makeMcpServer() {
   }, async ({ url }) => ({ content: [{ type: "text", text: JSON.stringify(await callBrowser("navigate", { url }), null, 2) }] }));
 
   server.registerTool("screenshot", {
-    description: "Capture the Windows desktop as a PNG image optimized for ChatGPT vision.",
+    description: "Capture each Windows monitor separately and return one PNG image per monitor.",
     inputSchema: z.object({})
   }, async () => {
-    const shot = await callDesktop("desktop_screenshot", {}, 30000);
-    if (!shot?.data) throw new Error("Desktop agent did not return PNG image data");
+    const monitors = await callDesktop("desktop_monitors", {}, 30000);
+    if (!Array.isArray(monitors) || monitors.length === 0) {
+      throw new Error("Desktop agent did not return any monitors");
+    }
 
-    // The native 5120px multi-monitor PNG can exceed the connector payload/render
-    // limit. Keep the original capture path untouched, but resize only the copy
-    // returned by this MCP tool so ChatGPT can actually receive and render it.
-    const source = Buffer.from(String(shot.data), "base64");
-    const rendered = await sharp(source)
-      .resize({ width: 1600, withoutEnlargement: true })
-      .png({ compressionLevel: 9, palette: true })
-      .toBuffer();
+    const content = [];
 
-    // Keep the 1600px PNG for GPT vision, and also include a compact WebP copy
-    // in metadata so the chat can materialize the same screenshot as a visible
-    // attachment without saving anything on the Railway server.
-    const displayCopy = await sharp(source)
-      .resize({ width: 600, withoutEnlargement: true })
-      .webp({ quality: 25, effort: 6 })
-      .toBuffer();
+    for (const monitor of monitors) {
+      const screenIndex = Number(monitor.index);
+      if (!Number.isInteger(screenIndex) || screenIndex < 0) continue;
 
-    return {
-      content: [
-        { type: "image", data: rendered.toString("base64"), mimeType: "image/png" },
-        {
-          type: "text",
-          text: JSON.stringify({
-            screenshot: true,
-            mimeType: "image/png",
-            screen: shot.screen ?? "virtual",
-            x: shot.x,
-            y: shot.y,
-            sourceWidth: shot.width,
-            sourceHeight: shot.height,
-            returnedBytes: rendered.length,
-            displayMimeType: "image/webp",
-            displayBase64: displayCopy.toString("base64"),
-            displayBytes: displayCopy.length
-          })
-        }
-      ]
-    };
+      const shot = await callDesktop("desktop_screenshot", { screen: screenIndex }, 30000);
+      if (!shot?.data) continue;
+
+      const source = Buffer.from(String(shot.data), "base64");
+
+      // Keep a high-enough PNG for ChatGPT vision while avoiding oversized MCP payloads.
+      const rendered = await sharp(source)
+        .resize({ width: 1600, withoutEnlargement: true })
+        .png({ compressionLevel: 9, palette: true })
+        .toBuffer();
+
+      // Compact copy retained in metadata so the chat can materialize this monitor
+      // as a visible attachment when needed.
+      const displayCopy = await sharp(source)
+        .resize({ width: 900, withoutEnlargement: true })
+        .webp({ quality: 35, effort: 6 })
+        .toBuffer();
+
+      content.push({
+        type: "text",
+        text: JSON.stringify({
+          screenshot: true,
+          monitor: screenIndex + 1,
+          screen: screenIndex,
+          primary: !!monitor.primary,
+          monitorName: monitor.name || null,
+          x: shot.x ?? monitor.x,
+          y: shot.y ?? monitor.y,
+          sourceWidth: shot.width ?? monitor.width,
+          sourceHeight: shot.height ?? monitor.height,
+          returnedBytes: rendered.length,
+          displayMimeType: "image/webp",
+          displayBase64: displayCopy.toString("base64"),
+          displayBytes: displayCopy.length
+        })
+      });
+
+      content.push({
+        type: "image",
+        data: rendered.toString("base64"),
+        mimeType: "image/png"
+      });
+    }
+
+    if (!content.some(item => item.type === "image")) {
+      throw new Error("Desktop agent did not return any monitor screenshots");
+    }
+
+    return { content };
   });
 
   server.registerTool("move_mouse", {
@@ -253,7 +272,7 @@ const httpServer = http.createServer((req, res) => {
     res.end(JSON.stringify({
       ok: true,
       service: "comet-chatgpt-bridge",
-      version: "0.7.13",
+      version: "0.7.14",
       mcp: "ready",
       browserConnected: !!browserSocket && browserSocket.readyState === WebSocket.OPEN,
       browserConnectedAt,
@@ -266,7 +285,7 @@ const httpServer = http.createServer((req, res) => {
 
   if (url.pathname === "/" && req.method === "GET") {
     res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({ service: "comet-chatgpt-bridge", version: "0.7.13", status: "ok", mcp: "/mcp" }));
+    res.end(JSON.stringify({ service: "comet-chatgpt-bridge", version: "0.7.14", status: "ok", mcp: "/mcp" }));
     return;
   }
 
@@ -327,7 +346,7 @@ wss.on("connection", (socket, req) => {
 });
 
 httpServer.listen(PORT, "0.0.0.0", () => {
-  console.log(`Comet ChatGPT Bridge v0.7.13 listening on 0.0.0.0:${PORT}`);
+  console.log(`Comet ChatGPT Bridge v0.7.14 listening on 0.0.0.0:${PORT}`);
   console.log("MCP v2 handler ready at /mcp | WSS /browser + /desktop | health /health");
 });
 
