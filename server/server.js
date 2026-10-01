@@ -265,8 +265,10 @@ function makeMcpServer() {
     _meta: { "openai/ui": { availableDisplayModes: ["inline", "fullscreen"], preferredDisplayMode: "fullscreen" } }
   }] }));
 
+  let liveMonitorCache = null;
   async function liveViewState() {
     if (!desktopSocket || desktopSocket.readyState !== WebSocket.OPEN) {
+      liveMonitorCache = null;
       return { connected: false, monitors: [], reason: "Windows desktop agent is offline" };
     }
     const monitors = await callDesktop("desktop_monitors", {}, 15000);
@@ -274,6 +276,7 @@ function makeMcpServer() {
       index: Number(m.index), name: String(m.name || `Screen ${Number(m.index) + 1}`),
       width: Number(m.width), height: Number(m.height), primary: !!m.primary
     })).filter(m => Number.isInteger(m.index) && m.index >= 0 && m.index < 16) : [];
+    liveMonitorCache = { socket: desktopSocket, monitors: safeMonitors, at: Date.now() };
     return { connected: true, monitors: safeMonitors };
   }
 
@@ -299,12 +302,13 @@ function makeMcpServer() {
     inputSchema: z.object({ screen: z.number().int().min(0).max(15) }),
     _meta: { ui: { visibility: ["app"] } }
   }, async ({ screen }) => {
-    const monitors = await callDesktop("desktop_monitors", {}, 15000);
-    if (!Array.isArray(monitors) || !monitors.some(m => Number(m.index) === screen)) {
-      throw new Error("Requested monitor is unavailable.");
+    if (!liveMonitorCache || liveMonitorCache.socket !== desktopSocket || Date.now() - liveMonitorCache.at > 10000) {
+      await liveViewState();
     }
+    if (!liveMonitorCache?.monitors.some(m => m.index === screen)) throw new Error("Requested monitor is unavailable.");
     const shot = await callDesktop("desktop_screenshot", { screen }, 20000);
     if (!shot?.data || shot.mimeType !== "image/png") throw new Error("Desktop agent returned no PNG frame.");
+    if (Number(shot.screen) !== screen) throw new Error("Requested monitor is unavailable.");
     const image = sharp(Buffer.from(shot.data, "base64"));
     const { data, info } = await image.resize({ width: 1280, withoutEnlargement: true })
       .webp({ quality: 54, effort: 2 }).toBuffer({ resolveWithObject: true });
