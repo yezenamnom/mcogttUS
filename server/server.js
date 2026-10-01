@@ -740,7 +740,7 @@ liveWss.on("connection", socket => {
       const started = Date.now();
       const requestedScreen = monitor;
       try {
-        const shot = await getFastDesktopFrame(requestedScreen, 1280, 58, 12000);
+        const shot = await getFastDesktopFrame(requestedScreen, 1024, 50, 12000);
         const frame = shot.buffer;
         if (socket.readyState !== WebSocket.OPEN) break;
         sendJson({ type: "frame", screen: requestedScreen, at: Date.now(), bytes: frame.length, latencyMs: Date.now() - started, mimeType: shot.mimeType, width: shot.width, height: shot.height, fallback: !!shot.fallback });
