@@ -1,7 +1,7 @@
 let ws = null;
 let reconnectTimer = null;
 let pingTimer = null;
-const EXT_VERSION = "0.6.3";
+const EXT_VERSION = "0.6.4";
 const domState = new Map();
 const cdpAttached = new Set();
 
@@ -158,14 +158,15 @@ function visualCursor(x,y,click=false) {
     host.style.setProperty("all","initial","important");
     host.style.setProperty("position","fixed","important");
     host.style.setProperty("inset","0","important");
-    host.style.setProperty("width","0","important");
-    host.style.setProperty("height","0","important");
+    host.style.setProperty("width","100vw","important");
+    host.style.setProperty("height","100vh","important");
+    host.style.setProperty("overflow","visible","important");
     host.style.setProperty("z-index","2147483647","important");
     host.style.setProperty("pointer-events","none","important");
     (document.documentElement||document.body).appendChild(host);
     root=host.attachShadow({mode:"open"});
     const style=document.createElement("style");
-    style.textContent=`:host{all:initial!important}#cursor{position:fixed!important;left:0;top:0;width:28px;height:34px;pointer-events:none!important;z-index:2147483647!important;transition:transform .12s ease-out!important;filter:drop-shadow(0 1px 2px rgba(0,0,0,.55))!important;will-change:transform!important}#cursor svg{display:block!important;width:28px!important;height:34px!important;overflow:visible!important}.ring{position:fixed!important;width:10px;height:10px;border:3px solid #1677ff;border-radius:999px;pointer-events:none!important;z-index:2147483646!important;transform:translate(-50%,-50%) scale(.4);opacity:1;animation:cgbclick .38s ease-out forwards}@keyframes cgbclick{to{transform:translate(-50%,-50%) scale(3.6);opacity:0}}`;
+    style.textContent=`:host{all:initial!important;position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;overflow:visible!important;pointer-events:none!important;z-index:2147483647!important}#cursor{position:fixed!important;left:0;top:0;width:28px;height:34px;pointer-events:none!important;z-index:2147483647!important;transition:transform .12s ease-out!important;filter:drop-shadow(0 1px 2px rgba(0,0,0,.55))!important;will-change:transform!important}#cursor svg{display:block!important;width:28px!important;height:34px!important;overflow:visible!important}.ring{position:fixed!important;width:10px;height:10px;border:3px solid #1677ff;border-radius:999px;pointer-events:none!important;z-index:2147483646!important;transform:translate(-50%,-50%) scale(.4);opacity:1;animation:cgbclick .38s ease-out forwards}@keyframes cgbclick{to{transform:translate(-50%,-50%) scale(3.6);opacity:0}}`;
     marker=document.createElement("div"); marker.id="cursor";
     marker.innerHTML='<svg viewBox="0 0 28 34" xmlns="http://www.w3.org/2000/svg"><path d="M2 1.5v25.2l6.8-6.4 4.7 10.7 5.2-2.4-4.7-10.3h10.2L2 1.5Z" fill="#fff" stroke="#111" stroke-width="2.2" stroke-linejoin="round"/></svg>';
     root.append(style,marker);
@@ -184,9 +185,9 @@ function visualCursor(x,y,click=false) {
 function pointTarget(x,y,clickIt) {
   x=Number(x); y=Number(y);
   if(!Number.isFinite(x)||!Number.isFinite(y)) throw new Error("x/y must be numbers");
-  const el=document.elementFromPoint(x,y);
-  if(!el) throw new Error("No element at coordinates");
   visualCursor(x,y,!!clickIt);
+  const el=document.elementFromPoint(x,y);
+  if(!el) return {moved:true,clicked:false,x,y,visualCursor:true,targetFound:false};
   const init={bubbles:true,cancelable:true,clientX:x,clientY:y,view:window,button:0,pointerType:"mouse"};
   el.dispatchEvent(new PointerEvent("pointermove",init)); el.dispatchEvent(new MouseEvent("mousemove",init)); el.dispatchEvent(new MouseEvent("mouseover",init));
   if(clickIt){
@@ -252,7 +253,7 @@ function domDigest(maxChars=40000){
 }
 function mouseAction(kind,x,y,button="left"){
   x=Number(x); y=Number(y); visualCursor(x,y,kind==="double"||kind==="right"||kind==="mousedown"||kind==="mouseup");
-  const el=document.elementFromPoint(x,y); if(!el) throw new Error("No element at coordinates");
+  const el=document.elementFromPoint(x,y); if(!el) return {ok:true,kind,x,y,visualCursor:true,targetFound:false};
   const btn=button==="right"?2:button==="middle"?1:0;
   const init={bubbles:true,cancelable:true,clientX:x,clientY:y,button:btn,view:window,pointerType:"mouse"};
   if(kind==="double"){ for(let i=0;i<2;i++){el.dispatchEvent(new PointerEvent("pointerdown",init));el.dispatchEvent(new MouseEvent("mousedown",init));el.dispatchEvent(new PointerEvent("pointerup",init));el.dispatchEvent(new MouseEvent("mouseup",init));el.dispatchEvent(new MouseEvent("click",{...init,detail:i+1}));} el.dispatchEvent(new MouseEvent("dblclick",{...init,detail:2})); }
