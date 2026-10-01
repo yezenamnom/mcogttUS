@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GPT US — عرض الكمبيوتر المباشر</title>
+  <style>
+    :root { color-scheme: dark; font-family: system-ui, sans-serif; background: #0b1020; color: #eef4ff; }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 14px; min-height: 360px; }
+    .bar { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 12px; }
+    h1 { font-size: 16px; margin: 0 auto 0 0; }
+    select, button { background: #202c45; color: #fff; border: 1px solid #577193; border-radius: 9px; padding: 8px 12px; font: inherit; }
+    button { cursor: pointer; }
+    button:hover { background: #334665; }
+    .badge { color: #9dc6f5; font-size: 13px; }
+    .screen { display: grid; place-items: center; position: relative; height: min(67vh, 760px); min-height: 310px; overflow: hidden; border: 1px solid #354763; border-radius: 13px; background: #030711; }
+    img { display: none; width: 100%; height: 100%; object-fit: contain; }
+    .screen.ready img { display: block; }
+    .message { position: absolute; padding: 20px; text-align: center; line-height: 1.6; color: #b6c9e3; }
+    .screen.ready .message { display: none; }
+    footer { margin-top: 9px; color: #9caec4; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div class="bar">
+    <h1>الكمبيوتر المباشر</h1>
+    <label for="monitor">الشاشة</label><select id="monitor" aria-label="اختر الشاشة"></select>
+    <button id="toggle" type="button">إيقاف مؤقت</button>
+    <span class="badge" id="status" role="status">جارٍ الاتصال…</span>
+  </div>
+  <div class="screen" id="screen"><img id="frame" alt="عرض مباشر لشاشة الكمبيوتر"><div class="message" id="message">بانتظار الاتصال بالكمبيوتر…</div></div>
+  <footer>خاص بحسابك عبر موصل GPT US. تُطلب اللقطات أثناء فتح هذه اللوحة فقط؛ لا تُنشر على رابط عام. يمكنك كتابة أوامر التحكم في محادثة ChatGPT.</footer>
+  <script>
+    (() => {
+      const pending = new Map();
+      let requestId = 1;
+      let active = true;
+      let latest = null;
+      let monitor = 0;
+      let timer = null;
+      let inFlight = false;
+      const screen = document.getElementById('screen');
+      const frame = document.getElementById('frame');
+      const message = document.getElementById('message');
+      const status = document.getElementById('status');
+      const select = document.getElementById('monitor');
+      const toggle = document.getElementById('toggle');
+      function rpc(method, params) {
+        const id = requestId++;
+        return new Promise((resolve, reject) => {
+          const timeout = setTimeout(() => { pending.delete(id); reject(new Error('انتهت مهلة الاتصال')); }, 25000);
+          pending.set(id, { resolve, reject, timeout });
+          window.parent.postMessage({ jsonrpc: '2.0', id, method, params }, '*');
+        });
+      }
+      window.addEventListener('message', event => {
+        if (event.source !== window.parent) return;
+        const value = event.data;
+        if (!value || typeof value !== 'object') return;
+        if (value.id !== undefined && pending.has(value.id)) {
+          const item = pending.get(value.id);
+          pending.delete(value.id);
+          clearTimeout(item.timeout);
+          value.error ? item.reject(new Error(value.error.message || 'تعذر عرض الصورة')) : item.resolve(value.result);
+        }
+        if (value.method === 'ui/notifications/tool-result') configure(value.params?.structuredContent);
+      });
+      function configure(result) {
+        if (!result || latest) return;
+        latest = result;
+        if (!result.connected) { active = false; status.textContent = 'البرنامج غير متصل'; message.textContent = 'شغّل برنامج GPT US على الكمبيوتر ثم افتح العرض مجددًا.'; return; }
+        const monitors = Array.isArray(result.monitors) ? result.monitors : [];
+        if (!monitors.length) { active = false; status.textContent = 'لا توجد شاشات'; return; }
+        select.replaceChildren(...monitors.map(m => {
+          const option = document.createElement('option'); option.value = String(m.index);
+          option.textContent = `${m.name} (${m.width}×${m.height})${m.primary ? ' — رئيسية' : ''}`;
+          return option;
+        }));
+        const secondary = monitors.find(m => !m.primary);
+        monitor = secondary ? secondary.index : monitors[0].index;
+        select.value = String(monitor);
+        status.textContent = 'مباشر';
+        schedule(0);
+      }
+      function schedule(delay) { clearTimeout(timer); if (active) timer = setTimeout(poll, delay); }
+      async function poll() {
+        if (!active || inFlight || !latest?.connected || document.hidden) { schedule(1000); return; }
+        inFlight = true;
+        const started = performance.now();
+        try {
+          const result = await rpc('tools/call', { name: 'live_view_frame', arguments: { screen: monitor } });
+          const data = result?._meta?.frame;
+          if (!data?.dataUrl || data.screen !== monitor) throw new Error('لم تصل الصورة إلى اللوحة');
+          frame.src = data.dataUrl;
+          screen.classList.add('ready');
+          status.textContent = `مباشر · ${Math.round(performance.now() - started)} ms`;
+        } catch (error) {
+          status.textContent = 'انقطع العرض — إعادة المحاولة';
+          if (!screen.classList.contains('ready')) message.textContent = error.message;
+        } finally { inFlight = false; schedule(700); }
+      }
+      select.addEventListener('change', () => {
+        monitor = Number(select.value); screen.classList.remove('ready');
+        message.textContent = 'جارٍ تبديل الشاشة…'; schedule(0);
+      });
+      toggle.addEventListener('click', () => {
+        active = !active; toggle.textContent = active ? 'إيقاف مؤقت' : 'متابعة';
+        status.textContent = active ? 'جارٍ الاستئناف…' : 'متوقف مؤقتًا';
+        if (active) schedule(0); else clearTimeout(timer);
+      });
+      window.addEventListener('pagehide', () => { active = false; clearTimeout(timer); });
+      setTimeout(() => { if (!latest) { status.textContent = 'بانتظار بيانات الاتصال'; message.textContent = 'إذا لم يبدأ العرض، أعد طلب «افتح العرض المباشر» في ChatGPT.'; } }, 5000);
+    })();
+  </script>
+</body>
+</html>

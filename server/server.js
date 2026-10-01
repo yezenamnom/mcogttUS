@@ -1,5 +1,6 @@
 import http from "node:http";
 import crypto from "node:crypto";
+import { readFileSync } from "node:fs";
 import sharp from "sharp";
 import { locateViewport } from "./viewport-match.js";
 import { createOwnerOAuth } from "./oauth.js";
@@ -18,6 +19,8 @@ const HOSTINGER_SFTP_USER = process.env.HOSTINGER_SFTP_USER || "";
 const HOSTINGER_SFTP_PRIVATE_KEY = (process.env.HOSTINGER_SFTP_PRIVATE_KEY || "").replace(/\\n/g, "\n");
 const HOSTINGER_SFTP_DIR = process.env.HOSTINGER_SFTP_DIR || "";
 const HOSTINGER_SCREENSHOT_BASE_URL = (process.env.HOSTINGER_SCREENSHOT_BASE_URL || "").replace(/\/$/, "");
+const LIVE_VIEW_URI = "ui://gpt-us/live-view.html";
+const LIVE_VIEW_HTML = readFileSync(new URL("./live-view.html", import.meta.url), "utf8");
 if (!BRIDGE_TOKEN) console.warn("WARNING: BRIDGE_TOKEN is not set.");
 
 let browserSocket = null;
@@ -136,7 +139,7 @@ function callDesktop(command, args = {}, timeoutMs = 30000) {
 }
 
 function makeMcpServer() {
-  const server = new McpServer({ name: "gpt-us-browser-desktop", version: "0.7.17" });
+  const server = new McpServer({ name: "gpt-us-browser-desktop", version: "0.7.18" });
 
   // Some ChatGPT connector hosts forward the app-qualified tool name back to
   // the MCP server (for example `gpt_us.bridge_info`) instead of stripping the
@@ -153,6 +156,55 @@ function makeMcpServer() {
     }
     return canonical;
   };
+
+  server.registerResource("gpt-us-live-view", LIVE_VIEW_URI, {
+    description: "Private live desktop viewer inside ChatGPT",
+    mimeType: "text/html;profile=mcp-app"
+  }, async () => ({ contents: [{
+    uri: LIVE_VIEW_URI,
+    mimeType: "text/html;profile=mcp-app",
+    text: LIVE_VIEW_HTML,
+    _meta: { "openai/ui": { availableDisplayModes: ["inline", "fullscreen"], preferredDisplayMode: "fullscreen" } }
+  }] }));
+
+  server.registerTool("open_live_view", {
+    description: "Open a private live viewer for the connected Windows computer inside ChatGPT. The viewer can show either monitor and stop at any time. Use this when the user asks to see their computer live; no frames are posted to a public URL.",
+    inputSchema: z.object({}),
+    _meta: { ui: { resourceUri: LIVE_VIEW_URI } }
+  }, async () => {
+    if (!desktopSocket || desktopSocket.readyState !== WebSocket.OPEN) {
+      return { content: [{ type: "text", text: "Windows desktop agent is offline. Start it on the computer to use live view." }], structuredContent: { connected: false, monitors: [] } };
+    }
+    const monitors = await callDesktop("desktop_monitors", {}, 15000);
+    const safeMonitors = Array.isArray(monitors) ? monitors.map(m => ({
+      index: Number(m.index), name: String(m.name || `Screen ${Number(m.index) + 1}`),
+      width: Number(m.width), height: Number(m.height), primary: !!m.primary
+    })).filter(m => Number.isInteger(m.index) && m.index >= 0 && m.index < 16) : [];
+    return {
+      content: [{ type: "text", text: `Private live view ready. ${safeMonitors.length} monitor(s) available. Open the viewer to watch; use the regular desktop tools to control the computer.` }],
+      structuredContent: { connected: true, monitors: safeMonitors }
+    };
+  });
+
+  server.registerTool("live_view_frame", {
+    description: "Fetch one private compressed desktop frame for the live-view app. App-only: frame bytes are not included in the model-visible response.",
+    inputSchema: z.object({ screen: z.number().int().min(0).max(15) }),
+    _meta: { ui: { visibility: ["app"] } }
+  }, async ({ screen }) => {
+    const monitors = await callDesktop("desktop_monitors", {}, 15000);
+    if (!Array.isArray(monitors) || !monitors.some(m => Number(m.index) === screen)) {
+      throw new Error("Requested monitor is unavailable.");
+    }
+    const shot = await callDesktop("desktop_screenshot", { screen }, 20000);
+    if (!shot?.data || shot.mimeType !== "image/png") throw new Error("Desktop agent returned no PNG frame.");
+    const image = sharp(Buffer.from(shot.data, "base64"));
+    const { data, info } = await image.resize({ width: 1280, withoutEnlargement: true })
+      .webp({ quality: 54, effort: 2 }).toBuffer({ resolveWithObject: true });
+    return {
+      content: [{ type: "text", text: "Private live frame delivered to viewer." }],
+      _meta: { frame: { dataUrl: `data:image/webp;base64,${data.toString("base64")}`, width: info.width, height: info.height, screen, at: Date.now() } }
+    };
+  });
 
   server.registerTool("get_page", {
     description: "Read the active Comet tab: title, URL, visible text, and interactive elements.",
@@ -454,7 +506,7 @@ const httpServer = http.createServer(async (req, res) => {
     res.end(JSON.stringify({
       ok: true,
       service: "comet-chatgpt-bridge",
-      version: "0.7.17",
+      version: "0.7.18",
       mcp: "ready",
       browserConnected: !!browserSocket && browserSocket.readyState === WebSocket.OPEN,
       browserConnectedAt,
@@ -467,7 +519,7 @@ const httpServer = http.createServer(async (req, res) => {
 
   if (url.pathname === "/" && req.method === "GET") {
     res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({ service: "comet-chatgpt-bridge", version: "0.7.17", status: "ok", mcp: "/mcp" }));
+    res.end(JSON.stringify({ service: "comet-chatgpt-bridge", version: "0.7.18", status: "ok", mcp: "/mcp" }));
     return;
   }
 
@@ -541,7 +593,7 @@ wss.on("connection", (socket, req) => {
 });
 
 httpServer.listen(PORT, "0.0.0.0", () => {
-  console.log(`Comet ChatGPT Bridge v0.7.17 listening on 0.0.0.0:${PORT}`);
+  console.log(`Comet ChatGPT Bridge v0.7.18 listening on 0.0.0.0:${PORT}`);
   console.log("MCP v2 handler ready at /mcp | WSS /browser + /desktop | health /health");
 });
 
