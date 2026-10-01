@@ -335,7 +335,15 @@ function makeMcpServer() {
   server.registerTool("network_logs",{description:"Read recent browser network requests captured through Chrome DevTools Protocol.",inputSchema:z.object({tabId:optTabId,limit:z.number().int().min(1).max(200).optional(),clear:z.boolean().optional()})},async args=>textResult("network_logs",args));
   server.registerTool("cdp_command",{description:"Send an allowed Chrome DevTools Protocol command to the target Comet tab.",inputSchema:z.object({tabId:optTabId,method:z.string(),params:z.record(z.string(),z.any()).optional()})},async args=>textResult("cdp_command",args));
 
-  const desktopText = async (command,args={},timeout=30000) => ({ content:[{type:"text",text:JSON.stringify(await callDesktop(command,args,timeout),null,2)}] });
+  const desktopAlias = command => ({
+    desktop_mouse_move:"desktop_move_mouse",
+    desktop_mouse_click:"desktop_click",
+    desktop_keyboard_type:"desktop_type_text",
+    desktop_keyboard_combo:"desktop_key_combo",
+    desktop_files_list:"desktop_list_files",
+    desktop_file_check:"desktop_file_exists"
+  }[command] || command);
+  const desktopText = async (command,args={},timeout=30000) => ({ content:[{type:"text",text:JSON.stringify(await callDesktop(desktopAlias(command),args,timeout),null,2)}] });
   server.registerTool("desktop_info",{description:"Report Windows desktop-agent connection and machine info.",inputSchema:z.object({})},async()=>desktopText("desktop_info"));
   server.registerTool("desktop_screen_size",{description:"Get the Windows virtual desktop dimensions.",inputSchema:z.object({})},async()=>desktopText("desktop_screen_size"));
   server.registerTool("desktop_monitors",{description:"List Windows monitors with index, primary flag and coordinates.",inputSchema:z.object({})},async()=>desktopText("desktop_monitors"));
@@ -349,12 +357,23 @@ function makeMcpServer() {
     return {content:[{type:"image",data:shot.data,mimeType:shot.mimeType||"image/png"},{type:"text",text:JSON.stringify({x:shot.x,y:shot.y,width:shot.width,height:shot.height})}]};
   });
   server.registerTool("desktop_move_mouse",{description:"Smoothly move the real Windows mouse pointer.",inputSchema:z.object({x:z.number(),y:z.number(),durationMs:z.number().int().min(0).max(10000).optional()})},async args=>desktopText("desktop_move_mouse",args));
+  server.registerTool("desktop_mouse_move",{description:"Alias for desktop_move_mouse. Smoothly move the real Windows mouse pointer.",inputSchema:z.object({x:z.number(),y:z.number(),durationMs:z.number().int().min(0).max(10000).optional()})},async args=>desktopText("desktop_mouse_move",args));
   server.registerTool("desktop_click",{description:"Move and click the real Windows mouse.",inputSchema:z.object({x:z.number().optional(),y:z.number().optional(),durationMs:z.number().int().min(0).max(10000).optional(),button:z.enum(["left","right"]).optional(),count:z.number().int().min(1).max(3).optional()})},async args=>desktopText("desktop_click",args));
   server.registerTool("desktop_mouse_path",{description:"Move the real Windows pointer smoothly through a path; optionally hold the mouse button for drawing or dragging.",inputSchema:z.object({points:z.array(z.object({x:z.number(),y:z.number()})).min(2).max(1000),durationMs:z.number().int().min(20).max(15000).optional(),press:z.boolean().optional(),button:z.enum(["left","right"]).optional()})},async args=>desktopText("desktop_mouse_path",args,30000));
   server.registerTool("desktop_type_text",{description:"Type text with the real Windows keyboard into the focused control.",inputSchema:z.object({text:z.string().max(20000),intervalMs:z.number().int().min(0).max(1000).optional()})},async args=>desktopText("desktop_type_text",args));
   server.registerTool("desktop_key_combo",{description:"Send a Windows keyboard shortcut.",inputSchema:z.object({keys:z.array(z.string()).min(1).max(8)})},async args=>desktopText("desktop_key_combo",args));
   server.registerTool("desktop_file_exists",{description:"Check whether a local Windows file or directory exists.",inputSchema:z.object({path:z.string()})},async args=>desktopText("desktop_file_exists",args));
   server.registerTool("desktop_list_files",{description:"List files and folders in a Windows directory.",inputSchema:z.object({path:z.string().optional()})},async args=>desktopText("desktop_list_files",args));
+  server.registerTool("desktop_create_folder",{description:"Create a folder on Windows when file-write permission is enabled.",inputSchema:z.object({path:z.string()})},async args=>desktopText("desktop_create_folder",args));
+  server.registerTool("desktop_copy_file",{description:"Copy a Windows file when file-write permission is enabled.",inputSchema:z.object({source:z.string(),destination:z.string(),overwrite:z.boolean().optional()})},async args=>desktopText("desktop_copy_file",args));
+  server.registerTool("desktop_move_file",{description:"Move or rename a Windows file when file-write permission is enabled.",inputSchema:z.object({source:z.string(),destination:z.string(),overwrite:z.boolean().optional()})},async args=>desktopText("desktop_move_file",args));
+  server.registerTool("desktop_open_path",{description:"Open a Windows file, folder, or ZIP path with its default application.",inputSchema:z.object({path:z.string()})},async args=>desktopText("desktop_open_path",args));
+  server.registerTool("desktop_scroll",{description:"Scroll with the real Windows mouse wheel.",inputSchema:z.object({delta:z.number().int().min(-12000).max(12000).optional()})},async args=>desktopText("desktop_scroll",args));
+  server.registerTool("desktop_window_activate",{description:"Bring a top-level Windows application window to the foreground by PID.",inputSchema:z.object({pid:z.number().int()})},async args=>desktopText("desktop_window_activate",args));
+  server.registerTool("desktop_window_minimize",{description:"Minimize a top-level Windows application window by PID.",inputSchema:z.object({pid:z.number().int()})},async args=>desktopText("desktop_window_minimize",args));
+  server.registerTool("desktop_window_maximize",{description:"Maximize a top-level Windows application window by PID.",inputSchema:z.object({pid:z.number().int()})},async args=>desktopText("desktop_window_maximize",args));
+  server.registerTool("desktop_window_restore",{description:"Restore a top-level Windows application window by PID.",inputSchema:z.object({pid:z.number().int()})},async args=>desktopText("desktop_window_restore",args));
+  server.registerTool("desktop_window_move",{description:"Move/resize a top-level Windows application window by PID.",inputSchema:z.object({pid:z.number().int(),x:z.number().int(),y:z.number().int(),width:z.number().int(),height:z.number().int()})},async args=>desktopText("desktop_window_move",args));
 
   return server;
 }
