@@ -3,19 +3,32 @@ const assert=require("node:assert/strict");
 const vm=require("node:vm");
 const fs=require("node:fs");
 const source=fs.readFileSync(__dirname+"/background.js","utf8");
-function harness(failPress=false){
+function harness(failPress=false,visual=true){
   const calls=[];
-  const context={Map,Number,Error,ensureCdp:async()=>{},chrome:{debugger:{sendCommand:async(_,method,args)=>{
-    calls.push(args);
-    if(failPress&&args.type==="mousePressed")throw new Error("Disconnected");
-  }}}};
+  const context={
+    Map,Number,Error,
+    ensureCdp:async()=>{},visualCursor(){},runInTab:async()=>visual,
+    chrome:{
+      storage:{local:{get:async()=>({cursorEnabled:true,clickEffect:true})}},
+      debugger:{sendCommand:async(_,method,args)=>{
+        calls.push(args);
+        if(failPress&&args.type==="mousePressed")throw new Error("Disconnected");
+      }}
+    }
+  };
   vm.createContext(context);
   vm.runInContext(source.slice(source.indexOf("const nativeButtons ="),source.indexOf("async function nativeMousePath"))+";globalThis.act=nativeMouseAction;",context);
   return {calls,act:context.act};
 }
 test("right click sends native move, press and release",async()=>{
-  const h=harness();await h.act(1,{kind:"right",x:10,y:20});
+  const h=harness();const result=await h.act(1,{kind:"right",x:10,y:20});
   assert.deepEqual(h.calls.map(c=>[c.type,c.button,c.buttons]),[["mouseMoved","none",0],["mousePressed","right",2],["mouseReleased","right",0]]);
+  assert.equal(result.visualCursorShown,true);
+});
+test("CDP action continues when the visual overlay cannot be injected",async()=>{
+  const h=harness(false,false);const result=await h.act(1,{kind:"click",x:10,y:20});
+  assert.equal(result.visualCursorShown,false);
+  assert.deepEqual(h.calls.map(c=>c.type),["mouseMoved","mousePressed","mouseReleased"]);
 });
 test("double click carries increasing click count",async()=>{
   const h=harness();await h.act(1,{kind:"double",x:10,y:20});

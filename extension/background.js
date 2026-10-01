@@ -1,7 +1,7 @@
 let ws = null;
 let reconnectTimer = null;
 let pingTimer = null;
-const EXT_VERSION = "0.9.1";
+const EXT_VERSION = "0.9.2";
 const domState = new Map();
 const cdpAttached = new Set();
 const networkState = new Map();
@@ -155,7 +155,7 @@ chrome.debugger.onEvent.addListener((source,method,params)=>{
 function bootstrapPageHelpers() {
   globalThis.__gptusShowWave?.();
   // Isolated-world state is reset by document navigation; reuse helpers within it.
-  if(globalThis.__gptusHelpersVersion==="0.9.1")return;
+  if(globalThis.__gptusHelpersVersion==="0.9.2")return;
   // Functions passed to chrome.scripting.executeScript do not retain the
   // background service worker's lexical scope. Publish the shared helpers
   // into the tab's isolated world before executing commands that reference them.
@@ -257,7 +257,7 @@ function bootstrapPageHelpers() {
       return {elementId:el.dataset.cgbId,tag:el.tagName.toLowerCase(),text:clean(el.innerText||el.getAttribute("aria-label")||el.placeholder||"").slice(0,180),visible:r.width>0&&r.height>0&&r.bottom>=0&&r.right>=0&&r.top<=innerHeight&&r.left<=innerWidth,disabled:!!el.disabled,rect:{x:r.x,y:r.y,width:r.width,height:r.height}};
     });
   };
-  globalThis.__gptusHelpersVersion="0.9.1";
+  globalThis.__gptusHelpersVersion="0.9.2";
 }
 async function runInTab(tabId, func, args = []) {
   await chrome.scripting.executeScript({ target: { tabId }, func: bootstrapPageHelpers });
@@ -292,7 +292,7 @@ function pageSnapshot(maxChars) {
   }));
   return { title: document.title, url: location.href, text: clean(document.body?.innerText || "").slice(0,maxChars), interactive:nodes };
 }
-function clickTarget(selector,text) {
+async function clickTarget(selector,text,cfg={}) {
   let el = selector ? document.querySelector(selector) : null;
   if (!el && text) {
     const target=text.toLowerCase().trim();
@@ -309,12 +309,17 @@ function clickTarget(selector,text) {
   if(!el) throw new Error("Clickable element not found");
   el.scrollIntoView?.({block:"center",inline:"center"});
   const clickable=el.closest?.("button,a,[role='button'],[role='menuitem'],[role='link'],[onclick],[tabindex]")||el;
+  const r=clickable.getBoundingClientRect();
+  const x=Math.max(0,Math.min(innerWidth-1,r.left+r.width/2));
+  const y=Math.max(0,Math.min(innerHeight-1,r.top+r.height/2));
+  let visualCursorShown=false;
+  if(cfg.enabled!==false) visualCursorShown=await globalThis.visualCursor(x,y,cfg.clickEffect!==false,cfg);
   clickable.dispatchEvent(new PointerEvent("pointerdown",{bubbles:true,pointerType:"mouse"}));
   clickable.dispatchEvent(new MouseEvent("mousedown",{bubbles:true,view:window}));
   clickable.dispatchEvent(new MouseEvent("mouseup",{bubbles:true,view:window}));
   clickable.dispatchEvent(new PointerEvent("pointerup",{bubbles:true,pointerType:"mouse"}));
   clickable.click();
-  return {clicked:true,tag:el.tagName.toLowerCase(),text:(el.innerText||el.value||"").trim().slice(0,200)};
+  return {clicked:true,tag:el.tagName.toLowerCase(),text:(el.innerText||el.value||"").trim().slice(0,200),x,y,input:"DOM",visualCursorShown};
 }
 function typeTarget(selector,text,clearFirst) {
   const el=document.querySelector(selector); if(!el) throw new Error("Input element not found"); el.focus();
@@ -512,6 +517,16 @@ async function mouseAction(kind,x,y,button="left"){
 }
 
 const nativeButtons = new Map();
+async function getCursorVisualConfig(){
+  const cfg=await chrome.storage.local.get(["cursorSize","cursorSpeed","cursorColor","clickColor","cursorEnabled","clickEffect"]);
+  return {enabled:cfg.cursorEnabled!==false,clickEffect:cfg.clickEffect!==false,size:Number(cfg.cursorSize||30),speed:Number(cfg.cursorSpeed||180),color:cfg.cursorColor||"#27e9f5",clickColor:cfg.clickColor||"#27e9f5"};
+}
+async function showNativeCursor(tabId,x,y,click){
+  const cfg=await getCursorVisualConfig();
+  if(!cfg.enabled)return false;
+  try{return !!await runInTab(tabId,visualCursor,[x,y,!!click&&cfg.clickEffect!==false,cfg]);}
+  catch{return false;}
+}
 async function nativeMouseAction(tabId,args) {
   const x=Number(args.x), y=Number(args.y), kind=args.kind;
   if(!Number.isFinite(x)||!Number.isFinite(y)||x<0||y<0) throw new Error("Invalid viewport coordinates");
@@ -522,6 +537,7 @@ async function nativeMouseAction(tabId,args) {
   const mask=button==="right"?2:button==="middle"?4:1;
   const send=(type,b,buttons,count=0)=>chrome.debugger.sendCommand({tabId},"Input.dispatchMouseEvent",{type,x,y,button:b,buttons,clickCount:count});
   let held=nativeButtons.get(tabId)||0;
+  const visualCursorShown=await showNativeCursor(tabId,x,y,["click","double","right","mousedown","mouseup"].includes(kind));
   await send("mouseMoved","none",held);
   if(kind==="mousedown"){await send("mousePressed",button,held|mask,1);nativeButtons.set(tabId,held|mask);}
   else if(kind==="mouseup"){await send("mouseReleased",button,held&~mask,1);nativeButtons.set(tabId,held&~mask);}
@@ -531,7 +547,7 @@ async function nativeMouseAction(tabId,args) {
       finally{await send("mouseReleased",button,held,count);}
     }
   }
-  return {dispatched:true,input:"CDP",kind,x,y,buttons:nativeButtons.get(tabId)||held,uiVerified:false,physicalCursor:false};
+  return {dispatched:true,input:"CDP",kind,x,y,buttons:nativeButtons.get(tabId)||held,visualCursorShown,uiVerified:false,physicalCursor:false};
 }
 
 async function nativeMousePath(tabId, points, options={}) {
@@ -619,7 +635,7 @@ async function executeCommand(command,args={}){
     case "dom_watch": { const t=await tab(); const snap=await runInTab(t.id,domDigest,[Math.min(Math.max(Number(args.maxChars||40000),1000),100000)]); const prev=domState.get(t.id); domState.set(t.id,snap); return {tabId:t.id,changed:!prev||prev.url!==snap.url||prev.text!==snap.text,previousAt:prev?.at||null,current:snap}; }
     case "dom_diff": { const t=await tab(); const snap=await runInTab(t.id,domDigest,[Math.min(Math.max(Number(args.maxChars||40000),1000),100000)]); const prev=domState.get(t.id); domState.set(t.id,snap); if(!prev) return {tabId:t.id,baselineCreated:true,current:snap}; const oldSet=new Set(prev.interactive.map(x=>x.elementId+"|"+x.text)); const newSet=new Set(snap.interactive.map(x=>x.elementId+"|"+x.text)); return {tabId:t.id,urlChanged:prev.url!==snap.url,textChanged:prev.text!==snap.text,added:[...newSet].filter(x=>!oldSet.has(x)).slice(0,200),removed:[...oldSet].filter(x=>!newSet.has(x)).slice(0,200),at:snap.at}; }
     case "wait_for": { const t=await tab(); const timeout=Math.min(Math.max(Number(args.timeoutMs||10000),100),60000), interval=Math.min(Math.max(Number(args.intervalMs||250),50),2000), began=Date.now(); while(Date.now()-began<timeout){ if(await runInTab(t.id,findCondition,[args.selector||null,args.text||null])) return {found:true,tabId:t.id,elapsedMs:Date.now()-began}; await sleep(interval); } throw new Error("wait_for timed out"); }
-    case "click": { const t=await tab(); return await runInTab(t.id,clickTarget,[args.selector||null,args.text||null]); }
+    case "click": { const t=await tab(); return await runInTab(t.id,clickTarget,[args.selector||null,args.text||null,await getCursorVisualConfig()]); }
     case "type": { const t=await tab(); return await runInTab(t.id,typeTarget,[args.selector,String(args.text??""),args.clearFirst!==false]); }
     case "navigate": { const t=await tab(); await chrome.tabs.update(t.id,{url:args.url}); return {navigated:true,tabId:t.id,url:args.url}; }
     case "move_mouse": { const t=await tab(); return await nativeMouseAction(t.id,{...args,kind:"mousemove"}); }

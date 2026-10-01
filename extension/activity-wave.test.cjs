@@ -9,7 +9,7 @@ test('page helpers are reused inside one document',()=>{
  const first=context.elementMap;
  vm.runInContext('bootstrapPageHelpers()',context);
  assert.equal(context.elementMap,first);
- assert.equal(context.__gptusHelpersVersion,'0.9.1');
+ assert.equal(context.__gptusHelpersVersion,'0.9.2');
 });
 test('wave is click-through, idle-hidden, reused and times out',()=>{
  let host,timer,created=0;
