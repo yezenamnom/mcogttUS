@@ -20,7 +20,7 @@ const HOSTINGER_SFTP_USER = process.env.HOSTINGER_SFTP_USER || "";
 const HOSTINGER_SFTP_PRIVATE_KEY = (process.env.HOSTINGER_SFTP_PRIVATE_KEY || "").replace(/\\n/g, "\n");
 const HOSTINGER_SFTP_DIR = process.env.HOSTINGER_SFTP_DIR || "";
 const HOSTINGER_SCREENSHOT_BASE_URL = (process.env.HOSTINGER_SCREENSHOT_BASE_URL || "").replace(/\/$/, "");
-const LIVE_VIEW_URI = "ui://gpt-us/live-view-v9.html";
+const LIVE_VIEW_URI = "ui://gpt-us/live-view-v10.html";
 const PUBLIC_ORIGIN = (process.env.OAUTH_ISSUER || "https://mcogttus-production.up.railway.app").replace(/\/$/, "");
 const LIVE_WS_ORIGIN = PUBLIC_ORIGIN.replace(/^https:/, "wss:").replace(/^http:/, "ws:");
 const LIVE_VIEW_HTML = readFileSync(new URL("./live-view.html", import.meta.url), "utf8");
@@ -46,6 +46,7 @@ const wss = new WebSocketServer({ noServer: true });
 const liveWss = new WebSocketServer({ noServer: true });
 const liveTickets = new Map();
 const livePushSubscribers = new Set();
+let activeLiveViewer = null;
 const desktopObservationCache = new Map();
 let sftpClient = null;
 let sftpConnectPromise = null;
@@ -730,6 +731,8 @@ httpServer.on("upgrade", (req, socket, head) => {
 });
 
 liveWss.on("connection", socket => {
+  if(activeLiveViewer&&activeLiveViewer!==socket&&activeLiveViewer.readyState===WebSocket.OPEN)activeLiveViewer.close(4002,"Replaced by newer live viewer");
+  activeLiveViewer=socket;
   let monitor = 0;
   let active = true;
   let pumping = false;
@@ -766,7 +769,7 @@ liveWss.on("connection", socket => {
       else if (message.type === "resume") { active = true; socket.liveActive = true; if(!pushMode)void pump(); }
     } catch {}
   });
-  socket.on("close", () => { active = false; livePushSubscribers.delete(socket); if(!livePushSubscribers.size)void callDesktop("desktop_mouse_action",{kind:"live_stream_stop"},3000).catch(()=>{}); });
+  socket.on("close", () => { active = false; livePushSubscribers.delete(socket); if(activeLiveViewer===socket)activeLiveViewer=null; if(!livePushSubscribers.size)void callDesktop("desktop_mouse_action",{kind:"live_stream_stop"},3000).catch(()=>{}); });
   socket.on("error", () => { active = false; livePushSubscribers.delete(socket); });
   sendJson({ type: "ready" });
 });
@@ -788,7 +791,7 @@ wss.on("connection", (socket, req) => {
     if(isDesktop&&isBinary){
       const packet=Buffer.from(raw);if(packet.length<6)return;const kind=packet[0],headerLength=packet.readInt32LE(1);if(headerLength<2||headerLength>65536||packet.length<5+headerLength)return;
       let meta;try{meta=JSON.parse(packet.subarray(5,5+headerLength).toString("utf8"));}catch{return;}const payload=packet.subarray(5+headerLength);
-      for(const viewer of livePushSubscribers){if(viewer.readyState!==WebSocket.OPEN||!viewer.liveActive)continue;if(kind===1&&Number(meta.screen)!==Number(viewer.liveMonitor))continue;viewer.send(JSON.stringify({type:kind===1?"frame":"audio",...meta,bytes:payload.length,latencyMs:Math.max(0,Date.now()-Number(meta.at||Date.now())),push:true}));viewer.send(payload,{binary:true});}
+      for(const viewer of livePushSubscribers){if(viewer.readyState!==WebSocket.OPEN||!viewer.liveActive)continue;if((kind===1||kind===3)&&Number(meta.screen)!==Number(viewer.liveMonitor))continue;viewer.send(JSON.stringify({type:kind===1?"frame":kind===3?"h264":"audio",...meta,bytes:payload.length,latencyMs:Math.max(0,Date.now()-Number(meta.at||Date.now())),push:true}));viewer.send(payload,{binary:true});}
       return;
     }
     let msg;

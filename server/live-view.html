@@ -15,8 +15,8 @@
     button:hover { background: #334665; }
     .badge { color: #9dc6f5; font-size: 13px; }
     .screen { display: grid; place-items: center; position: relative; height: min(67vh, 760px); min-height: 310px; overflow: hidden; border: 1px solid #354763; border-radius: 13px; background: #030711; }
-    img { display: none; width: 100%; height: 100%; object-fit: contain; }
-    .screen.ready img { display: block; }
+    img, video { display: none; width: 100%; height: 100%; object-fit: contain; }
+    .screen.ready.jpeg img, .screen.ready.h264 video { display: block; }
     .message { position: absolute; padding: 20px; text-align: center; line-height: 1.6; color: #b6c9e3; }
     .screen.ready .message { display: none; }
     footer { margin-top: 9px; color: #9caec4; font-size: 12px; }
@@ -30,7 +30,7 @@
     <button id="audio" type="button">تشغيل الصوت</button>
     <span class="badge" id="status" role="status">جارٍ الاتصال…</span>
   </div>
-  <div class="screen" id="screen"><img id="frame" alt="عرض مباشر لشاشة الكمبيوتر"><div class="message" id="message">بانتظار الاتصال بالكمبيوتر…</div></div>
+  <div class="screen" id="screen"><img id="frame" alt="عرض مباشر لشاشة الكمبيوتر"><video id="video" autoplay muted playsinline></video><div class="message" id="message">بانتظار الاتصال بالكمبيوتر…</div></div>
   <footer>خاص بحسابك عبر موصل GPT US. تُطلب اللقطات أثناء فتح هذه اللوحة فقط؛ لا تُنشر على رابط عام. يمكنك كتابة أوامر التحكم في محادثة ChatGPT.</footer>
   <script>
     (() => {
@@ -47,10 +47,14 @@
       let audioContext = null;
       let audioEnabled = false;
       let nextAudioTime = 0;
+      let mediaSource = null;
+      let sourceBuffer = null;
+      const videoQueue = [];
       let lastFrameAt = 0;
       let measuredFps = 0;
       const screen = document.getElementById('screen');
       const frame = document.getElementById('frame');
+      const video = document.getElementById('video');
       const message = document.getElementById('message');
       const status = document.getElementById('status');
       const select = document.getElementById('monitor');
@@ -72,6 +76,21 @@
         if (nextAudioTime < audioContext.currentTime || nextAudioTime > audioContext.currentTime + 0.4) nextAudioTime = audioContext.currentTime + 0.03;
         source.start(nextAudioTime); nextAudioTime += output.duration;
       }
+      function appendVideo(bytes, info) {
+        if (!mediaSource) {
+          mediaSource = new MediaSource(); video.src = URL.createObjectURL(mediaSource);
+          mediaSource.addEventListener('sourceopen', () => {
+            const codec = `video/mp4; codecs="${info.codec || 'avc1.640028'}"`;
+            if (!MediaSource.isTypeSupported(codec)) { status.textContent = 'H.264 غير مدعوم في هذه الواجهة'; return; }
+            sourceBuffer = mediaSource.addSourceBuffer(codec); sourceBuffer.mode = 'sequence';
+            sourceBuffer.addEventListener('updateend', flushVideo);
+            flushVideo();
+          }, { once: true });
+        }
+        videoQueue.push(new Uint8Array(bytes)); flushVideo();
+        screen.classList.remove('jpeg'); screen.classList.add('ready','h264');
+      }
+      function flushVideo() { if (!sourceBuffer || sourceBuffer.updating || !videoQueue.length) return; try { sourceBuffer.appendBuffer(videoQueue.shift()); } catch { videoQueue.splice(0); } }
       function withTimeout(promise, milliseconds) {
         return new Promise((resolve, reject) => {
           const timeout = setTimeout(() => reject(new Error('انتهت مهلة استجابة ChatGPT للوحة')), milliseconds);
@@ -142,7 +161,7 @@
             try {
               const data = JSON.parse(event.data);
               if (data.type === 'frame') { pendingFrameInfo = data; pendingPacketInfo = data; }
-              else if (data.type === 'audio') pendingPacketInfo = data;
+              else if (data.type === 'audio' || data.type === 'h264') pendingPacketInfo = data;
               else if (data.type === 'error') { status.textContent = 'خطأ في البث'; message.textContent = data.message; }
             } catch {}
             return;
@@ -150,11 +169,12 @@
           if (!pendingPacketInfo) return;
           const packetInfo = pendingPacketInfo; pendingPacketInfo = null;
           if (packetInfo.type === 'audio') { playAudio(event.data, packetInfo); return; }
+          if (packetInfo.type === 'h264') { appendVideo(event.data, packetInfo); status.textContent = 'H.264 مباشر · هدف 60 FPS · صوت متاح'; return; }
           if (!pendingFrameInfo || pendingFrameInfo.screen !== monitor) return;
           const reader = new FileReader();
           reader.onload = () => { frame.src = reader.result; };
           reader.readAsDataURL(new Blob([event.data], { type: pendingFrameInfo.mimeType || 'image/webp' }));
-          screen.classList.add('ready');
+          screen.classList.remove('h264'); screen.classList.add('ready','jpeg');
           const now = performance.now();
           if (lastFrameAt) {
             const sample = 1000 / Math.max(1, now - lastFrameAt);
@@ -164,7 +184,11 @@
           status.textContent = `WebSocket مباشر · ${measuredFps ? measuredFps.toFixed(1) : '…'} FPS · ${pendingFrameInfo.latencyMs} ms`;
         };
         stream.onerror = () => { status.textContent = 'تعذر فتح قناة البث'; };
-        stream.onclose = () => { stream = null; if (active) { latest = null; schedule(1000); } };
+        stream.onclose = event => {
+          stream = null;
+          if(event.code===4002){active=false;clearTimeout(timer);screen.classList.remove('ready');status.textContent='انتقل البث إلى جلسة أحدث';message.textContent='تم إيقاف هذه الجلسة لتخفيف الضغط. آخر شات فتح العرض المباشر هو الجلسة النشطة.';return;}
+          if (active) { latest = null; schedule(1000); }
+        };
       }
       async function refreshConnection() {
         try {
