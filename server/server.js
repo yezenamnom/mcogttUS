@@ -48,7 +48,7 @@ function callDesktop(command, args = {}, timeoutMs = 30000) {
 }
 
 function makeMcpServer() {
-  const server = new McpServer({ name: "gpt-us-browser-desktop", version: "0.7.4" });
+  const server = new McpServer({ name: "gpt-us-browser-desktop", version: "0.7.5" });
 
   server.registerTool("get_page", {
     description: "Read the active Comet tab: title, URL, visible text, and interactive elements.",
@@ -71,26 +71,15 @@ function makeMcpServer() {
   }, async ({ url }) => ({ content: [{ type: "text", text: JSON.stringify(await callBrowser("navigate", { url }), null, 2) }] }));
 
   server.registerTool("screenshot", {
-    description: "Capture a PNG screenshot. source=browser captures the active Comet tab; source=desktop captures a Windows monitor and returns it directly as an MCP image.",
-    inputSchema: z.object({
-      source: z.enum(["browser","desktop"]).optional(),
-      screen: z.number().int().min(0).optional()
-    })
-  }, async ({ source = "browser", screen }) => {
-    if (source === "desktop") {
-      const shot = await callDesktop("desktop_screenshot", screen === undefined ? {} : { screen }, 30000);
-      if (!shot?.data) throw new Error("Desktop agent did not return PNG image data");
-      return { content: [
-        { type: "image", data: shot.data, mimeType: shot.mimeType || "image/png" },
-        { type: "text", text: JSON.stringify({ source:"desktop", screen:screen ?? null, x:shot.x, y:shot.y, width:shot.width, height:shot.height }) }
-      ] };
-    }
-    const shot = await callBrowser("screenshot");
-    const prefix = "data:image/png;base64,";
-    const dataUrl = shot?.dataUrl || "";
-    if (!dataUrl.startsWith(prefix)) throw new Error("Browser did not return a valid PNG screenshot");
-    const imageData = dataUrl.slice(prefix.length);
-    return { content: [{ type: "image", data: imageData, mimeType: "image/png" }] };
+    description: "Capture the primary Windows desktop monitor as a PNG image.",
+    inputSchema: z.object({})
+  }, async () => {
+    const shot = await callDesktop("desktop_screenshot", { screen: 1 }, 30000);
+    if (!shot?.data) throw new Error("Desktop agent did not return PNG image data");
+    return { content: [
+      { type: "image", data: shot.data, mimeType: shot.mimeType || "image/png" },
+      { type: "text", text: JSON.stringify({ source:"desktop", screen:1, x:shot.x, y:shot.y, width:shot.width, height:shot.height }) }
+    ] };
   });
 
   server.registerTool("move_mouse", {
@@ -228,7 +217,7 @@ const httpServer = http.createServer((req, res) => {
     res.end(JSON.stringify({
       ok: true,
       service: "comet-chatgpt-bridge",
-      version: "0.7.4",
+      version: "0.7.5",
       mcp: "ready",
       browserConnected: !!browserSocket && browserSocket.readyState === WebSocket.OPEN,
       browserConnectedAt,
@@ -241,7 +230,7 @@ const httpServer = http.createServer((req, res) => {
 
   if (url.pathname === "/" && req.method === "GET") {
     res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({ service: "comet-chatgpt-bridge", version: "0.7.4", status: "ok", mcp: "/mcp" }));
+    res.end(JSON.stringify({ service: "comet-chatgpt-bridge", version: "0.7.5", status: "ok", mcp: "/mcp" }));
     return;
   }
 
@@ -302,7 +291,7 @@ wss.on("connection", (socket, req) => {
 });
 
 httpServer.listen(PORT, "0.0.0.0", () => {
-  console.log(`Comet ChatGPT Bridge v0.7.4 listening on 0.0.0.0:${PORT}`);
+  console.log(`Comet ChatGPT Bridge v0.7.5 listening on 0.0.0.0:${PORT}`);
   console.log("MCP v2 handler ready at /mcp | WSS /browser + /desktop | health /health");
 });
 
