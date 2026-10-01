@@ -1,6 +1,9 @@
 let ws = null;
 let reconnectTimer = null;
 let pingTimer = null;
+const EXT_VERSION = "0.6.0";
+const domState = new Map();
+const cdpAttached = new Set();
 
 async function getConfig() {
   const cfg = await chrome.storage.local.get(["bridgeUrl", "bridgeToken"]);
@@ -58,15 +61,42 @@ async function activeTab() {
   if (!tab?.id) throw new Error("No active tab found");
   return tab;
 }
+async function targetTab(args={}) {
+  if (args.tabId !== undefined && args.tabId !== null) {
+    const id=Number(args.tabId);
+    if(!Number.isInteger(id)) throw new Error("tabId must be an integer");
+    const tab=await chrome.tabs.get(id);
+    if(!tab?.id) throw new Error("Tab not found");
+    return tab;
+  }
+  return activeTab();
+}
+function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
+async function ensureCdp(tabId){
+  if(cdpAttached.has(tabId)) return;
+  await chrome.debugger.attach({tabId},"0.1");
+  cdpAttached.add(tabId);
+}
+async function cdp(tabId,method,params={}){
+  await ensureCdp(tabId);
+  return await chrome.debugger.sendCommand({tabId},method,params);
+}
+chrome.debugger.onDetach.addListener(source=>{ if(source.tabId) cdpAttached.delete(source.tabId); });
 async function runInTab(tabId, func, args = []) {
   const [out] = await chrome.scripting.executeScript({ target: { tabId }, func, args });
   return out?.result;
 }
 function pageSnapshot(maxChars) {
   const clean = s => (s || "").replace(/\s+/g, " ").trim();
+  const secret = el => {
+    const t=(el.getAttribute?.("type")||"").toLowerCase();
+    const ac=(el.getAttribute?.("autocomplete")||"").toLowerCase();
+    const n=(el.getAttribute?.("name")||"").toLowerCase();
+    return t==="password" || /cc-|cvc|cvv|token|secret|password|passwd|otp|one-time/.test(ac+" "+n);
+  };
   const nodes = [...document.querySelectorAll("button,a,input,textarea,select,[role='button'],[contenteditable='true']")].slice(0, 400).map((el,index)=>({
     index, tag: el.tagName.toLowerCase(),
-    text: clean(el.innerText || el.value || el.getAttribute("aria-label") || el.getAttribute("title") || "").slice(0,240),
+    text: clean(el.innerText || (secret(el)?"[REDACTED]":el.value) || el.getAttribute("aria-label") || el.getAttribute("title") || "").slice(0,240),
     id: el.id || null, name: el.getAttribute("name"), role: el.getAttribute("role"),
     type: el.getAttribute("type"), placeholder: el.getAttribute("placeholder")
   }));
@@ -112,7 +142,8 @@ function inspectForm() {
   const fields=[...document.querySelectorAll("input,textarea,select,[contenteditable='true']")].filter(el=>el.type!=="hidden").slice(0,300).map((el,index)=>{
     const id=el.id||""; const label=(id&&document.querySelector('label[for="'+CSS.escape(id)+'"]')) || el.closest("label");
     const r=el.getBoundingClientRect();
-    return {index,tag:el.tagName.toLowerCase(),type:el.type||null,id:id||null,name:el.name||null,label:clean(label?.innerText),placeholder:el.placeholder||null,ariaLabel:el.getAttribute("aria-label"),value:el.value??el.textContent??"",required:!!el.required,disabled:!!el.disabled,options:el.tagName==="SELECT"?[...el.options].map(o=>({value:o.value,text:clean(o.text)})).slice(0,100):undefined,rect:{x:r.x,y:r.y,width:r.width,height:r.height}};
+    const sensitive=(el.type==="password"||/cc-|cvc|cvv|token|secret|password|passwd|otp|one-time/i.test((el.autocomplete||"")+" "+(el.name||"")));
+    return {index,tag:el.tagName.toLowerCase(),type:el.type||null,id:id||null,name:el.name||null,label:clean(label?.innerText),placeholder:el.placeholder||null,ariaLabel:el.getAttribute("aria-label"),value:sensitive?"[REDACTED]":(el.value??el.textContent??""),required:!!el.required,disabled:!!el.disabled,options:el.tagName==="SELECT"?[...el.options].map(o=>({value:o.value,text:clean(o.text)})).slice(0,100):undefined,rect:{x:r.x,y:r.y,width:r.width,height:r.height}};
   });
   return {title:document.title,url:location.href,fields};
 }
@@ -144,34 +175,98 @@ function pressKey(key,selector) {
   return {pressed:true,key};
 }
 
+
+function elementMap() {
+  const clean=s=>(s||"").replace(/\s+/g," ").trim();
+  return [...document.querySelectorAll("button,a,input,textarea,select,[role='button'],[contenteditable='true'],[tabindex]")].slice(0,800).map((el,i)=>{
+    if(!el.dataset.cgbId) el.dataset.cgbId="cgb-"+i+"-"+Math.random().toString(36).slice(2,7);
+    const r=el.getBoundingClientRect();
+    return {elementId:el.dataset.cgbId,tag:el.tagName.toLowerCase(),text:clean(el.innerText||el.getAttribute("aria-label")||el.placeholder||"").slice(0,180),visible:r.width>0&&r.height>0&&r.bottom>=0&&r.right>=0&&r.top<=innerHeight&&r.left<=innerWidth,disabled:!!el.disabled,rect:{x:r.x,y:r.y,width:r.width,height:r.height}};
+  });
+}
+function viewportInfo(){ return {url:location.href,title:document.title,width:innerWidth,height:innerHeight,devicePixelRatio,scrollX,scrollY,scrollWidth:document.documentElement.scrollWidth,scrollHeight:document.documentElement.scrollHeight}; }
+function domDigest(maxChars=40000){
+  const text=(document.body?.innerText||"").replace(/\s+/g," ").trim().slice(0,maxChars);
+  const interactive=elementMap();
+  return {url:location.href,title:document.title,text,interactive,at:Date.now()};
+}
+function mouseAction(kind,x,y,button="left"){
+  const el=document.elementFromPoint(Number(x),Number(y)); if(!el) throw new Error("No element at coordinates");
+  const init={bubbles:true,clientX:Number(x),clientY:Number(y),button:button==="right"?2:button==="middle"?1:0,view:window};
+  if(kind==="double"){ el.dispatchEvent(new MouseEvent("mousedown",init));el.dispatchEvent(new MouseEvent("mouseup",init));el.dispatchEvent(new MouseEvent("click",init));el.dispatchEvent(new MouseEvent("mousedown",init));el.dispatchEvent(new MouseEvent("mouseup",init));el.dispatchEvent(new MouseEvent("click",{...init,detail:2}));el.dispatchEvent(new MouseEvent("dblclick",{...init,detail:2})); }
+  else if(kind==="right"){ el.dispatchEvent(new MouseEvent("contextmenu",{...init,button:2})); }
+  else { el.dispatchEvent(new MouseEvent(kind,{...init})); }
+  return {ok:true,kind,tag:el.tagName.toLowerCase()};
+}
+function dragDrop(fromX,fromY,toX,toY){
+  const src=document.elementFromPoint(Number(fromX),Number(fromY)), dst=document.elementFromPoint(Number(toX),Number(toY));
+  if(!src||!dst) throw new Error("Drag source/target not found");
+  const dt=new DataTransfer();
+  src.dispatchEvent(new DragEvent("dragstart",{bubbles:true,dataTransfer:dt,clientX:Number(fromX),clientY:Number(fromY)}));
+  dst.dispatchEvent(new DragEvent("dragenter",{bubbles:true,dataTransfer:dt,clientX:Number(toX),clientY:Number(toY)}));
+  dst.dispatchEvent(new DragEvent("dragover",{bubbles:true,dataTransfer:dt,clientX:Number(toX),clientY:Number(toY)}));
+  dst.dispatchEvent(new DragEvent("drop",{bubbles:true,dataTransfer:dt,clientX:Number(toX),clientY:Number(toY)}));
+  src.dispatchEvent(new DragEvent("dragend",{bubbles:true,dataTransfer:dt,clientX:Number(toX),clientY:Number(toY)}));
+  return {dragged:true};
+}
+function keyCombo(keys,selector){
+  const el=selector?document.querySelector(selector):document.activeElement||document.body; if(!el) throw new Error("Key target not found");
+  el.focus?.(); const arr=Array.isArray(keys)?keys:[keys]; const mods={ctrlKey:arr.includes("Control"),shiftKey:arr.includes("Shift"),altKey:arr.includes("Alt"),metaKey:arr.includes("Meta")};
+  for(const k of arr) el.dispatchEvent(new KeyboardEvent("keydown",{key:k,bubbles:true,...mods}));
+  for(const k of [...arr].reverse()) el.dispatchEvent(new KeyboardEvent("keyup",{key:k,bubbles:true,...mods}));
+  return {pressed:true,keys:arr};
+}
+function findCondition(selector,text){
+  const el=selector?document.querySelector(selector):null;
+  if(selector) return !!el;
+  if(text) return (document.body?.innerText||"").includes(text);
+  return document.readyState==="complete";
+}
+
 function scrollPage(x,y,behavior) { window.scrollBy({left:x,top:y,behavior:behavior||"smooth"}); return {scrolled:true,x:window.scrollX,y:window.scrollY}; }
 function hoverTarget(selector,text) { let el=selector?document.querySelector(selector):null; if(!el&&text){const q=text.toLowerCase();el=[...document.querySelectorAll("a,button,input,select,textarea,[role='button'],*")].find(e=>(e.innerText||e.value||"").trim().toLowerCase().includes(q));} if(!el) throw new Error("Element not found"); el.scrollIntoView({block:"center"}); el.dispatchEvent(new MouseEvent("mouseover",{bubbles:true})); el.dispatchEvent(new MouseEvent("mouseenter",{bubbles:true})); return {hovered:true}; }
 function selectTarget(selector,value) { const el=document.querySelector(selector); if(!el||el.tagName!=="SELECT") throw new Error("Select element not found"); el.value=value; el.dispatchEvent(new Event("change",{bubbles:true})); return {selected:true,value:el.value}; }
 
-async function executeCommand(command,args){
+async function executeCommand(command,args={}){
+  const tab=async()=>await targetTab(args);
   switch(command){
-    case "get_page": { const tab=await activeTab(); const result=await runInTab(tab.id,pageSnapshot,[Math.min(Math.max(Number(args.maxChars||30000),1000),100000)]); return {tabId:tab.id,...result}; }
-    case "click": { const tab=await activeTab(); return await runInTab(tab.id,clickTarget,[args.selector||null,args.text||null]); }
-    case "type": { const tab=await activeTab(); return await runInTab(tab.id,typeTarget,[args.selector,String(args.text??""),args.clearFirst!==false]); }
-    case "navigate": { const tab=await activeTab(); await chrome.tabs.update(tab.id,{url:args.url}); return {navigated:true,tabId:tab.id,url:args.url}; }
-    case "move_mouse": { const tab=await activeTab(); return await runInTab(tab.id,pointTarget,[args.x,args.y,false]); }
-    case "click_at": { const tab=await activeTab(); return await runInTab(tab.id,pointTarget,[args.x,args.y,true]); }
-    case "inspect_form": { const tab=await activeTab(); return await runInTab(tab.id,inspectForm,[]); }
-    case "fill_form": { const tab=await activeTab(); return await runInTab(tab.id,fillForm,[args.fields||[]]); }
-    case "press_key": { const tab=await activeTab(); return await runInTab(tab.id,pressKey,[String(args.key||""),args.selector||null]); }
-    case "batch_actions": { const results=[]; for(const a of (args.actions||[])){ if(a.command==="batch_actions") throw new Error("Nested batch_actions is not allowed"); results.push(await executeCommand(a.command,a.args||{})); } return {completed:true,count:results.length,results}; }
-    case "screenshot": { const tab=await activeTab(); const dataUrl=await chrome.tabs.captureVisibleTab(tab.windowId,{format:"png"}); return {tabId:tab.id,dataUrl}; }
-    case "list_tabs": { const tabs=await chrome.tabs.query({currentWindow:true}); return tabs.map(t=>({id:t.id,active:t.active,title:t.title,url:t.url})); }
+    case "bridge_info": { const t=await activeTab().catch(()=>null); return {extensionVersion:EXT_VERSION,connected:ws?.readyState===WebSocket.OPEN,activeTabId:t?.id||null,cdpAttached:[...cdpAttached],capabilities:["tabId","live_dom","dom_diff","element_map","viewport","wait_for","mouse_advanced","keyboard_combo","drag_drop","zoom","parallel_actions","cdp","screenshots","forms"]}; }
+    case "get_page": { const t=await tab(); const result=await runInTab(t.id,pageSnapshot,[Math.min(Math.max(Number(args.maxChars||30000),1000),100000)]); return {tabId:t.id,...result}; }
+    case "get_viewport": { const t=await tab(); return {tabId:t.id,...await runInTab(t.id,viewportInfo,[])}; }
+    case "element_map": { const t=await tab(); return {tabId:t.id,elements:await runInTab(t.id,elementMap,[])}; }
+    case "dom_watch": { const t=await tab(); const snap=await runInTab(t.id,domDigest,[Math.min(Math.max(Number(args.maxChars||40000),1000),100000)]); const prev=domState.get(t.id); domState.set(t.id,snap); return {tabId:t.id,changed:!prev||prev.url!==snap.url||prev.text!==snap.text,previousAt:prev?.at||null,current:snap}; }
+    case "dom_diff": { const t=await tab(); const snap=await runInTab(t.id,domDigest,[Math.min(Math.max(Number(args.maxChars||40000),1000),100000)]); const prev=domState.get(t.id); domState.set(t.id,snap); if(!prev) return {tabId:t.id,baselineCreated:true,current:snap}; const oldSet=new Set(prev.interactive.map(x=>x.elementId+"|"+x.text)); const newSet=new Set(snap.interactive.map(x=>x.elementId+"|"+x.text)); return {tabId:t.id,urlChanged:prev.url!==snap.url,textChanged:prev.text!==snap.text,added:[...newSet].filter(x=>!oldSet.has(x)).slice(0,200),removed:[...oldSet].filter(x=>!newSet.has(x)).slice(0,200),at:snap.at}; }
+    case "wait_for": { const t=await tab(); const timeout=Math.min(Math.max(Number(args.timeoutMs||10000),100),60000), interval=Math.min(Math.max(Number(args.intervalMs||250),50),2000), began=Date.now(); while(Date.now()-began<timeout){ if(await runInTab(t.id,findCondition,[args.selector||null,args.text||null])) return {found:true,tabId:t.id,elapsedMs:Date.now()-began}; await sleep(interval); } throw new Error("wait_for timed out"); }
+    case "click": { const t=await tab(); return await runInTab(t.id,clickTarget,[args.selector||null,args.text||null]); }
+    case "type": { const t=await tab(); return await runInTab(t.id,typeTarget,[args.selector,String(args.text??""),args.clearFirst!==false]); }
+    case "navigate": { const t=await tab(); await chrome.tabs.update(t.id,{url:args.url}); return {navigated:true,tabId:t.id,url:args.url}; }
+    case "move_mouse": { const t=await tab(); return await runInTab(t.id,pointTarget,[args.x,args.y,false]); }
+    case "click_at": { const t=await tab(); return await runInTab(t.id,pointTarget,[args.x,args.y,true]); }
+    case "mouse_action": { const t=await tab(); return await runInTab(t.id,mouseAction,[args.kind,args.x,args.y,args.button||"left"]); }
+    case "drag_drop": { const t=await tab(); return await runInTab(t.id,dragDrop,[args.fromX,args.fromY,args.toX,args.toY]); }
+    case "inspect_form": { const t=await tab(); return await runInTab(t.id,inspectForm,[]); }
+    case "fill_form": { const t=await tab(); return await runInTab(t.id,fillForm,[args.fields||[]]); }
+    case "press_key": { const t=await tab(); return await runInTab(t.id,pressKey,[String(args.key||""),args.selector||null]); }
+    case "key_combo": { const t=await tab(); return await runInTab(t.id,keyCombo,[args.keys||[],args.selector||null]); }
+    case "zoom": { const t=await tab(); const factor=Number(args.factor); if(!(factor===0||(factor>=0.25&&factor<=5))) throw new Error("zoom factor must be 0 or 0.25..5"); await chrome.tabs.setZoom(t.id,factor); return {tabId:t.id,zoom:await chrome.tabs.getZoom(t.id)}; }
+    case "batch_actions": { const results=[]; for(const a of (args.actions||[])){ if(["batch_actions","parallel_actions"].includes(a.command)) throw new Error("Nested batch/parallel is not allowed"); results.push(await executeCommand(a.command,a.args||{})); } return {completed:true,count:results.length,results}; }
+    case "parallel_actions": { const acts=args.actions||[]; const results=await Promise.all(acts.map(a=>{if(["batch_actions","parallel_actions"].includes(a.command)) throw new Error("Nested batch/parallel is not allowed"); return executeCommand(a.command,a.args||{});})); return {completed:true,count:results.length,results}; }
+    case "screenshot": { const t=await tab(); if(!t.active) throw new Error("Screenshot capture requires the target tab to be active in its window"); const dataUrl=await chrome.tabs.captureVisibleTab(t.windowId,{format:"png"}); const metrics=await runInTab(t.id,viewportInfo,[]); return {tabId:t.id,dataUrl,...metrics}; }
+    case "list_tabs": { const tabs=await chrome.tabs.query({currentWindow:true}); return tabs.map(t=>({id:t.id,active:t.active,title:t.title,url:t.url,status:t.status})); }
     case "activate_tab": { const tabId=Number(args.tabId); if(!Number.isInteger(tabId)) throw new Error("tabId must be an integer"); await chrome.tabs.update(tabId,{active:true}); return {activated:true,tabId}; }
-    case "new_tab": { const tab=await chrome.tabs.create({url:args.url||"about:blank",active:args.active!==false}); return {created:true,tabId:tab.id,url:tab.url}; }
-    case "close_tab": { const tabId=args.tabId?Number(args.tabId):(await activeTab()).id; await chrome.tabs.remove(tabId); return {closed:true,tabId}; }
-    case "duplicate_tab": { const tabId=args.tabId?Number(args.tabId):(await activeTab()).id; const tab=await chrome.tabs.duplicate(tabId); return {duplicated:true,tabId:tab.id}; }
-    case "reload": { const tab=await activeTab(); await chrome.tabs.reload(tab.id,{bypassCache:!!args.bypassCache}); return {reloaded:true,tabId:tab.id}; }
-    case "go_back": { const tab=await activeTab(); await chrome.tabs.goBack(tab.id); return {back:true,tabId:tab.id}; }
-    case "go_forward": { const tab=await activeTab(); await chrome.tabs.goForward(tab.id); return {forward:true,tabId:tab.id}; }
-    case "scroll": { const tab=await activeTab(); return await runInTab(tab.id,scrollPage,[Number(args.x||0),Number(args.y||0),args.behavior||"smooth"]); }
-    case "hover": { const tab=await activeTab(); return await runInTab(tab.id,hoverTarget,[args.selector||null,args.text||null]); }
-    case "select": { const tab=await activeTab(); return await runInTab(tab.id,selectTarget,[args.selector,String(args.value)]); }
+    case "new_tab": { const t=await chrome.tabs.create({url:args.url||"about:blank",active:args.active!==false}); return {created:true,tabId:t.id,url:t.url}; }
+    case "close_tab": { const t=await tab(); await chrome.tabs.remove(t.id); domState.delete(t.id); return {closed:true,tabId:t.id}; }
+    case "duplicate_tab": { const t=await tab(); const n=await chrome.tabs.duplicate(t.id); return {duplicated:true,tabId:n.id}; }
+    case "reload": { const t=await tab(); await chrome.tabs.reload(t.id,{bypassCache:!!args.bypassCache}); return {reloaded:true,tabId:t.id}; }
+    case "go_back": { const t=await tab(); await chrome.tabs.goBack(t.id); return {back:true,tabId:t.id}; }
+    case "go_forward": { const t=await tab(); await chrome.tabs.goForward(t.id); return {forward:true,tabId:t.id}; }
+    case "scroll": { const t=await tab(); return await runInTab(t.id,scrollPage,[Number(args.x||0),Number(args.y||0),args.behavior||"smooth"]); }
+    case "hover": { const t=await tab(); return await runInTab(t.id,hoverTarget,[args.selector||null,args.text||null]); }
+    case "select": { const t=await tab(); return await runInTab(t.id,selectTarget,[args.selector,String(args.value)]); }
+    case "cdp_attach": { const t=await tab(); await ensureCdp(t.id); await chrome.debugger.sendCommand({tabId:t.id},"Page.enable"); await chrome.debugger.sendCommand({tabId:t.id},"DOM.enable"); await chrome.debugger.sendCommand({tabId:t.id},"Network.enable"); return {attached:true,tabId:t.id}; }
+    case "cdp_detach": { const t=await tab(); if(cdpAttached.has(t.id)) await chrome.debugger.detach({tabId:t.id}); cdpAttached.delete(t.id); return {detached:true,tabId:t.id}; }
+    case "cdp_status": { const t=await tab(); const targets=await chrome.debugger.getTargets(); const info=targets.find(x=>x.tabId===t.id); return {tabId:t.id,attached:!!info?.attached,title:info?.title,url:info?.url}; }
+    case "cdp_command": { const t=await tab(); const method=String(args.method||""); const allowed=/^(Page\.(enable|getLayoutMetrics|captureScreenshot)|DOM\.(enable|getDocument|getOuterHTML)|DOMSnapshot\.captureSnapshot|Network\.(enable|getResponseBody)|Performance\.(enable|getMetrics)|Runtime\.getIsolateId|Input\.(dispatchMouseEvent|dispatchKeyEvent))$/.test(method); if(!allowed) throw new Error("CDP method not allowed by bridge safety policy"); return {tabId:t.id,method,result:await cdp(t.id,method,args.params||{})}; }
     default: throw new Error(`Unknown command: ${command}`);
   }
 }
