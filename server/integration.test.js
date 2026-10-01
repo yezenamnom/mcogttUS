@@ -40,6 +40,7 @@ test("MCP routes combined mouse operations to desktop and serves health",async()
   assert.equal(wrong.status,401);
   const list=await rpc(2,"tools/list",{});
   assert.ok(list.result.tools.some(t=>t.name==="desktop_mouse_action"));
+  assert.deepEqual(list.result.tools.find(t=>t.name==="desktop_mouse_action")._meta.securitySchemes,[{type:"oauth2",scopes:["computer:control"]}]);
   assert.ok(list.result.tools.some(t=>t.name==="gpt_us.desktop_mouse_action"));
   const reply=await rpc(3,"tools/call",{name:"desktop_mouse_action",arguments:{kind:"click",x:-100,y:50}});
   assert.equal(reply.result.isError,undefined);

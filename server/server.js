@@ -139,7 +139,7 @@ function callDesktop(command, args = {}, timeoutMs = 30000) {
 }
 
 function makeMcpServer() {
-  const server = new McpServer({ name: "gpt-us-browser-desktop", version: "0.7.19" });
+  const server = new McpServer({ name: "gpt-us-browser-desktop", version: "0.7.20" });
 
   // Some ChatGPT connector hosts forward the app-qualified tool name back to
   // the MCP server (for example `gpt_us.bridge_info`) instead of stripping the
@@ -147,7 +147,8 @@ function makeMcpServer() {
   // compatibility alias that invokes the exact same validated handler.
   const registerCanonicalTool = server.registerTool.bind(server);
   server.registerTool = (name, config, handler) => {
-    const secured = { ...config, securitySchemes: config.securitySchemes || [{ type: "oauth2", scopes: ["computer:control"] }] };
+    const schemes = config.securitySchemes || [{ type: "oauth2", scopes: ["computer:control"] }];
+    const secured = { ...config, securitySchemes: schemes, _meta: { ...config._meta, securitySchemes: schemes } };
     const canonical = registerCanonicalTool(name, secured, handler);
     if (!name.startsWith("gpt_us.")) {
       registerCanonicalTool(`gpt_us.${name}`, {
@@ -509,7 +510,7 @@ const httpServer = http.createServer(async (req, res) => {
     res.end(JSON.stringify({
       ok: true,
       service: "comet-chatgpt-bridge",
-      version: "0.7.19",
+      version: "0.7.20",
       mcp: "ready",
       browserConnected: !!browserSocket && browserSocket.readyState === WebSocket.OPEN,
       browserConnectedAt,
@@ -522,7 +523,7 @@ const httpServer = http.createServer(async (req, res) => {
 
   if (url.pathname === "/" && req.method === "GET") {
     res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({ service: "comet-chatgpt-bridge", version: "0.7.19", status: "ok", mcp: "/mcp" }));
+    res.end(JSON.stringify({ service: "comet-chatgpt-bridge", version: "0.7.20", status: "ok", mcp: "/mcp" }));
     return;
   }
 
@@ -596,7 +597,7 @@ wss.on("connection", (socket, req) => {
 });
 
 httpServer.listen(PORT, "0.0.0.0", () => {
-  console.log(`Comet ChatGPT Bridge v0.7.19 listening on 0.0.0.0:${PORT}`);
+  console.log(`Comet ChatGPT Bridge v0.7.20 listening on 0.0.0.0:${PORT}`);
   console.log("MCP v2 handler ready at /mcp | WSS /browser + /desktop | health /health");
 });
 
