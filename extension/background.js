@@ -1,7 +1,7 @@
 let ws = null;
 let reconnectTimer = null;
 let pingTimer = null;
-const EXT_VERSION = "0.6.0";
+const EXT_VERSION = "0.6.1";
 const domState = new Map();
 const cdpAttached = new Set();
 
@@ -86,6 +86,18 @@ async function runInTab(tabId, func, args = []) {
   const [out] = await chrome.scripting.executeScript({ target: { tabId }, func, args });
   return out?.result;
 }
+function deepElements(selector="*") {
+  const out=[]; const seen=new Set();
+  const walk=root=>{
+    if(!root||seen.has(root)) return; seen.add(root);
+    try {
+      for(const el of root.querySelectorAll(selector)) out.push(el);
+      for(const el of root.querySelectorAll("*")) if(el.shadowRoot) walk(el.shadowRoot);
+      for(const frame of root.querySelectorAll("iframe,frame")) { try { if(frame.contentDocument) walk(frame.contentDocument); } catch {} }
+    } catch {}
+  };
+  walk(document); return [...new Set(out)];
+}
 function pageSnapshot(maxChars) {
   const clean = s => (s || "").replace(/\s+/g, " ").trim();
   const secret = el => {
@@ -94,7 +106,7 @@ function pageSnapshot(maxChars) {
     const n=(el.getAttribute?.("name")||"").toLowerCase();
     return t==="password" || /cc-|cvc|cvv|token|secret|password|passwd|otp|one-time/.test(ac+" "+n);
   };
-  const nodes = [...document.querySelectorAll("button,a,input,textarea,select,[role='button'],[contenteditable='true']")].slice(0, 400).map((el,index)=>({
+  const nodes = deepElements("button,a,input,textarea,select,[role='button'],[role='menuitem'],[role='link'],[tabindex],[onclick],[contenteditable='true']").slice(0, 800).map((el,index)=>({
     index, tag: el.tagName.toLowerCase(),
     text: clean(el.innerText || (secret(el)?"[REDACTED]":el.value) || el.getAttribute("aria-label") || el.getAttribute("title") || "").slice(0,240),
     id: el.id || null, name: el.getAttribute("name"), role: el.getAttribute("role"),
@@ -106,12 +118,24 @@ function clickTarget(selector,text) {
   let el = selector ? document.querySelector(selector) : null;
   if (!el && text) {
     const target=text.toLowerCase().trim();
-    const candidates=[...document.querySelectorAll("button,a,[role='button'],input[type='button'],input[type='submit']")];
+    const candidates=deepElements("button,a,[role='button'],[role='menuitem'],[role='link'],[tabindex],[onclick],input[type='button'],input[type='submit']");
     el=candidates.find(x=>((x.innerText||x.value||x.getAttribute("aria-label")||"").trim().toLowerCase()===target)) ||
        candidates.find(x=>((x.innerText||x.value||x.getAttribute("aria-label")||"").trim().toLowerCase().includes(target)));
   }
+  if(!el && text) {
+    const target=text.toLowerCase().trim();
+    const all=deepElements("*").filter(x=>{ const r=x.getBoundingClientRect?.(); return r&&r.width>0&&r.height>0; });
+    el=all.find(x=>((x.innerText||x.textContent||x.getAttribute?.("aria-label")||"").replace(/\s+/g," ").trim().toLowerCase()===target)) ||
+       all.find(x=>((x.innerText||x.textContent||x.getAttribute?.("aria-label")||"").replace(/\s+/g," ").trim().toLowerCase().includes(target)));
+  }
   if(!el) throw new Error("Clickable element not found");
-  el.scrollIntoView({block:"center",inline:"center"}); el.click();
+  el.scrollIntoView?.({block:"center",inline:"center"});
+  const clickable=el.closest?.("button,a,[role='button'],[role='menuitem'],[role='link'],[onclick],[tabindex]")||el;
+  clickable.dispatchEvent(new PointerEvent("pointerdown",{bubbles:true,pointerType:"mouse"}));
+  clickable.dispatchEvent(new MouseEvent("mousedown",{bubbles:true,view:window}));
+  clickable.dispatchEvent(new MouseEvent("mouseup",{bubbles:true,view:window}));
+  clickable.dispatchEvent(new PointerEvent("pointerup",{bubbles:true,pointerType:"mouse"}));
+  clickable.click();
   return {clicked:true,tag:el.tagName.toLowerCase(),text:(el.innerText||el.value||"").trim().slice(0,200)};
 }
 function typeTarget(selector,text,clearFirst) {
@@ -178,7 +202,7 @@ function pressKey(key,selector) {
 
 function elementMap() {
   const clean=s=>(s||"").replace(/\s+/g," ").trim();
-  return [...document.querySelectorAll("button,a,input,textarea,select,[role='button'],[contenteditable='true'],[tabindex]")].slice(0,800).map((el,i)=>{
+  return deepElements("button,a,input,textarea,select,[role='button'],[role='menuitem'],[role='link'],[contenteditable='true'],[tabindex],[onclick]").slice(0,1200).map((el,i)=>{
     if(!el.dataset.cgbId) el.dataset.cgbId="cgb-"+i+"-"+Math.random().toString(36).slice(2,7);
     const r=el.getBoundingClientRect();
     return {elementId:el.dataset.cgbId,tag:el.tagName.toLowerCase(),text:clean(el.innerText||el.getAttribute("aria-label")||el.placeholder||"").slice(0,180),visible:r.width>0&&r.height>0&&r.bottom>=0&&r.right>=0&&r.top<=innerHeight&&r.left<=innerWidth,disabled:!!el.disabled,rect:{x:r.x,y:r.y,width:r.width,height:r.height}};
@@ -230,7 +254,7 @@ function selectTarget(selector,value) { const el=document.querySelector(selector
 async function executeCommand(command,args={}){
   const tab=async()=>await targetTab(args);
   switch(command){
-    case "bridge_info": { const t=await activeTab().catch(()=>null); return {extensionVersion:EXT_VERSION,connected:ws?.readyState===WebSocket.OPEN,activeTabId:t?.id||null,cdpAttached:[...cdpAttached],capabilities:["tabId","live_dom","dom_diff","element_map","viewport","wait_for","mouse_advanced","keyboard_combo","drag_drop","zoom","parallel_actions","cdp","screenshots","forms"]}; }
+    case "bridge_info": { const t=await activeTab().catch(()=>null); return {extensionVersion:EXT_VERSION,connected:ws?.readyState===WebSocket.OPEN,activeTabId:t?.id||null,cdpAttached:[...cdpAttached],capabilities:["tabId","live_dom","dom_diff","deep_dom","shadow_dom","same_origin_iframes","element_map","viewport","wait_for","mouse_advanced","keyboard_combo","drag_drop","zoom","parallel_actions","cdp","screenshots","forms","click_fallback"]}; }
     case "get_page": { const t=await tab(); const result=await runInTab(t.id,pageSnapshot,[Math.min(Math.max(Number(args.maxChars||30000),1000),100000)]); return {tabId:t.id,...result}; }
     case "get_viewport": { const t=await tab(); return {tabId:t.id,...await runInTab(t.id,viewportInfo,[])}; }
     case "element_map": { const t=await tab(); return {tabId:t.id,elements:await runInTab(t.id,elementMap,[])}; }
