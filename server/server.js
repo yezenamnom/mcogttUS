@@ -356,6 +356,7 @@ function makeMcpServer() {
     const shot=await callDesktop("desktop_screenshot",{},30000);
     return {content:[{type:"image",data:shot.data,mimeType:shot.mimeType||"image/png"},{type:"text",text:JSON.stringify({x:shot.x,y:shot.y,width:shot.width,height:shot.height})}]};
   });
+  server.registerTool("desktop_cursor_position",{description:"Read current Windows cursor coordinates.",inputSchema:z.object({})},async args=>desktopText("desktop_cursor_position",args));
   server.registerTool("desktop_move_mouse",{description:"Smoothly move the real Windows mouse pointer.",inputSchema:z.object({x:z.number(),y:z.number(),durationMs:z.number().int().min(0).max(10000).optional()})},async args=>desktopText("desktop_move_mouse",args));
   server.registerTool("desktop_mouse_move",{description:"Alias for desktop_move_mouse. Smoothly move the real Windows mouse pointer.",inputSchema:z.object({x:z.number(),y:z.number(),durationMs:z.number().int().min(0).max(10000).optional()})},async args=>desktopText("desktop_mouse_move",args));
   server.registerTool("desktop_click",{description:"Move and click the real Windows mouse.",inputSchema:z.object({x:z.number().optional(),y:z.number().optional(),durationMs:z.number().int().min(0).max(10000).optional(),button:z.enum(["left","right"]).optional(),count:z.number().int().min(1).max(3).optional()})},async args=>desktopText("desktop_click",args));
