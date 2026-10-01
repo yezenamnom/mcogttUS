@@ -454,6 +454,13 @@ const httpServer = http.createServer((req, res) => {
   }
 
   if (url.pathname === "/mcp") {
+    const supplied=String(req.headers.authorization||"");
+    const expected="Bearer "+BRIDGE_TOKEN;
+    const actualBytes=Buffer.from(supplied),expectedBytes=Buffer.from(expected);
+    if(!BRIDGE_TOKEN||actualBytes.length!==expectedBytes.length||!crypto.timingSafeEqual(actualBytes,expectedBytes)){
+      res.writeHead(401,{"content-type":"application/json","www-authenticate":"Bearer"});
+      res.end(JSON.stringify({error:"Unauthorized"}));return;
+    }
     void nodeMcpHandler(req, res);
     return;
   }

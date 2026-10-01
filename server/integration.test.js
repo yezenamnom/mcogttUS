@@ -25,7 +25,7 @@ test("MCP routes combined mouse operations to desktop and serves health",async()
   });
   let session;
   async function rpc(id,method,params){
-   const headers={"content-type":"application/json",accept:"application/json, text/event-stream"};
+   const headers={"content-type":"application/json",accept:"application/json, text/event-stream",authorization:"Bearer "+token};
    if(session)headers["mcp-session-id"]=session;
    const r=await fetch(base+"/mcp",{method:"POST",headers,body:JSON.stringify({jsonrpc:"2.0",id,method,params})});
    assert.ok(r.ok,await r.clone().text());session=r.headers.get("mcp-session-id")||session;
@@ -34,6 +34,10 @@ test("MCP routes combined mouse operations to desktop and serves health",async()
    return JSON.parse(data);
   }
   await rpc(1,"initialize",{protocolVersion:"2025-03-26",capabilities:{},clientInfo:{name:"test",version:"1"}});
+  const denied=await fetch(base+"/mcp",{method:"POST",headers:{"content-type":"application/json"},body:"{}"});
+  assert.equal(denied.status,401);
+  const wrong=await fetch(base+"/mcp",{method:"POST",headers:{"content-type":"application/json",authorization:"Bearer wrong"},body:"{}"});
+  assert.equal(wrong.status,401);
   const list=await rpc(2,"tools/list",{});
   assert.ok(list.result.tools.some(t=>t.name==="desktop_mouse_action"));
   const reply=await rpc(3,"tools/call",{name:"desktop_mouse_action",arguments:{kind:"click",x:-100,y:50}});
