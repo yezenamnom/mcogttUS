@@ -761,7 +761,7 @@ liveWss.on("connection", socket => {
       const message = JSON.parse(raw.toString());
       if (message.type === "select" && Number.isInteger(message.screen) && message.screen >= 0 && message.screen < 16) {
         monitor = message.screen; socket.liveMonitor = monitor; active = true; socket.liveActive = true;
-        void callDesktop("desktop_mouse_action",{kind:"live_stream_start",screen:monitor,fps:60,width:1024,quality:48,audio:true},5000).then(result=>{if(result?.started){pushMode=true;livePushSubscribers.add(socket);}else{pushMode=false;void pump();}}).catch(()=>{pushMode=false;void pump();});
+        void callDesktop("desktop_mouse_action",{kind:"live_stream_start",screen:monitor,fps:60,width:640,quality:35,audio:true},5000).then(result=>{if(result?.started){pushMode=true;livePushSubscribers.add(socket);}else{pushMode=false;void pump();}}).catch(()=>{pushMode=false;void pump();});
       } else if (message.type === "pause") { active = false; socket.liveActive = false; }
       else if (message.type === "resume") { active = true; socket.liveActive = true; if(!pushMode)void pump(); }
     } catch {}
