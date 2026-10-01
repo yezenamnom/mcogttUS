@@ -1,0 +1,14 @@
+{
+  "name": "comet-chatgpt-bridge-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.17.0",
+    "ws": "^8.18.0",
+    "zod": "^3.25.0"
+  }
+}
