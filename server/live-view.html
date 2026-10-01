@@ -40,6 +40,8 @@
       let monitor = null;
       let timer = null;
       let inFlight = false;
+      let lastFrameAt = 0;
+      let measuredFps = 0;
       const screen = document.getElementById('screen');
       const frame = document.getElementById('frame');
       const message = document.getElementById('message');
@@ -110,19 +112,27 @@
           if (!data?.dataUrl || data.screen !== monitor) throw new Error('لم تصل الصورة إلى اللوحة');
           frame.src = data.dataUrl;
           screen.classList.add('ready');
-          status.textContent = `مباشر · ${Math.round(performance.now() - started)} ms`;
+          const now = performance.now();
+          if (lastFrameAt) {
+            const sample = 1000 / Math.max(1, now - lastFrameAt);
+            measuredFps = measuredFps ? measuredFps * 0.7 + sample * 0.3 : sample;
+          }
+          lastFrameAt = now;
+          status.textContent = `مباشر · ${measuredFps ? measuredFps.toFixed(1) : '…'} FPS · ${Math.round(now - started)} ms`;
         } catch (error) {
           status.textContent = 'انقطع العرض — إعادة المحاولة';
           message.textContent = error.message;
           if (/offline|disconnected|not connected/i.test(error.message)) latest = null;
-        } finally { inFlight = false; schedule(700); }
+        } finally { inFlight = false; schedule(33); }
       }
       select.addEventListener('change', () => {
         monitor = Number(select.value); screen.classList.remove('ready');
+        lastFrameAt = 0; measuredFps = 0;
         message.textContent = 'جارٍ تبديل الشاشة…'; schedule(0);
       });
       toggle.addEventListener('click', () => {
         active = !active; toggle.textContent = active ? 'إيقاف مؤقت' : 'متابعة';
+        lastFrameAt = 0; measuredFps = 0;
         status.textContent = active ? 'جارٍ الاستئناف…' : 'متوقف مؤقتًا';
         if (active) schedule(0); else clearTimeout(timer);
       });
