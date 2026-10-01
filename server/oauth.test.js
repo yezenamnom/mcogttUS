@@ -24,8 +24,11 @@ test('owner OAuth: discovery, manual consent, PKCE, replay, expiry and restart',
   assert.equal((await call('/oauth/authorize?'+new URLSearchParams({...args,code_challenge_method:'plain'}))).status,400);
   const page=await call('/oauth/authorize?'+new URLSearchParams(args));
   assert.equal(page.status,200);
+  assert.equal(page.headers.get('referrer-policy'),'same-origin');
   const cookie=page.headers.get('set-cookie').split(';')[0];
   const request=(await page.text()).match(/name="request" value="([^"]+)"/)[1];
+  assert.equal((await call('/oauth/approve',{request,decision:'allow',owner_token:secret},{origin:'null',cookie})).status,400);
+  assert.equal((await call('/oauth/approve',{request,decision:'allow',owner_token:secret},{origin:'https://evil.example',cookie})).status,400);
   assert.equal((await call('/oauth/approve',{request,decision:'allow',owner_token:secret},{origin:issuer})).status,400);
   assert.equal((await call('/oauth/approve',{request,decision:'allow',owner_token:'wrong'},{origin:issuer,cookie})).status,403);
   const approved=await call('/oauth/approve',{request,decision:'allow',owner_token:secret},{origin:issuer,cookie});
