@@ -141,6 +141,7 @@ function makeMcpServer() {
   server.registerTool("cdp_attach",{description:"Attach Chrome DevTools Protocol to a target tab.",inputSchema:z.object({tabId:optTabId})},async args=>textResult("cdp_attach",args));
   server.registerTool("cdp_detach",{description:"Detach Chrome DevTools Protocol from a target tab.",inputSchema:z.object({tabId:optTabId})},async args=>textResult("cdp_detach",args));
   server.registerTool("cdp_status",{description:"Check CDP attachment status.",inputSchema:z.object({tabId:optTabId})},async args=>textResult("cdp_status",args));
+  server.registerTool("cdp_command",{description:"Send an allowed Chrome DevTools Protocol command to the target Comet tab.",inputSchema:z.object({tabId:optTabId,method:z.string(),params:z.record(z.string(),z.any()).optional()})},async args=>textResult("cdp_command",args));
 
   return server;
 }
