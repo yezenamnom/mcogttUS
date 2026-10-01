@@ -106,9 +106,26 @@ function makeMcpServer() {
   }, async args => ({ content: [{ type: "text", text: JSON.stringify(await callBrowser("press_key", args), null, 2) }] }));
 
   server.registerTool("batch_actions", {
-    description: "Execute multiple browser commands sequentially in one MCP call for lower latency.",
+    description: "Execute browser or Windows desktop commands sequentially. Commands beginning with desktop_ are routed to the connected Windows Desktop Bridge; all other commands are routed to Comet.",
     inputSchema: z.object({ actions:z.array(z.object({ command:z.string(), args:z.record(z.string(),z.any()).optional() })).min(1).max(50) })
-  }, async args => ({ content: [{ type: "text", text: JSON.stringify(await callBrowser("batch_actions", args, 60000), null, 2) }] }));
+  }, async ({ actions }) => {
+    // Preserve the extension's fast native batching when every action is a browser action.
+    if (actions.every(a => !a.command.startsWith("desktop_"))) {
+      return { content: [{ type: "text", text: JSON.stringify(await callBrowser("batch_actions", { actions }, 60000), null, 2) }] };
+    }
+    const results = [];
+    for (const a of actions) {
+      try {
+        const result = a.command.startsWith("desktop_")
+          ? await callDesktop(a.command, a.args || {}, 30000)
+          : await callBrowser(a.command, a.args || {}, 30000);
+        results.push({ ok:true, command:a.command, result });
+      } catch (e) {
+        results.push({ ok:false, command:a.command, error:e?.message || String(e) });
+      }
+    }
+    return { content: [{ type: "text", text: JSON.stringify({ completed:true, count:results.length, results }, null, 2) }] };
+  });
 
   server.registerTool("list_tabs", {
     description: "List tabs in the current Comet window.",
