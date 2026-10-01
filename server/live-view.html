@@ -127,7 +127,7 @@
           if (!pendingFrameInfo || pendingFrameInfo.screen !== monitor) return;
           const reader = new FileReader();
           reader.onload = () => { frame.src = reader.result; };
-          reader.readAsDataURL(new Blob([event.data], { type: 'image/webp' }));
+          reader.readAsDataURL(new Blob([event.data], { type: pendingFrameInfo.mimeType || 'image/webp' }));
           screen.classList.add('ready');
           const now = performance.now();
           if (lastFrameAt) {

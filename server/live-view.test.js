@@ -25,6 +25,7 @@ test("private live-view resource, auth, monitor selection and frame delivery", a
     }
     assert.ok(ready, logs);
     const png = await sharp({ create: { width: 1600, height: 900, channels: 4, background: "#385b9a" } }).png().toBuffer();
+    const jpeg = await sharp(png).resize({ width: 1280 }).jpeg({ quality: 58 }).toBuffer();
     socket = new WebSocket(`ws://127.0.0.1:${port}/desktop?token=${token}`);
     await new Promise((resolve, reject) => { socket.once("open", resolve); socket.once("error", reject); });
     const commands = [];
@@ -33,7 +34,9 @@ test("private live-view resource, auth, monitor selection and frame delivery", a
       commands.push(command);
       const result = command.command === "desktop_monitors"
         ? [{ index: 0, name: "Primary", width: 1600, height: 900, primary: true }, { index: 1, name: "Second", width: 1600, height: 900, primary: false }]
-        : { mimeType: "image/png", data: png.toString("base64"), screen: command.args.screen };
+        : command.command === "desktop_stream_frame"
+          ? { mimeType: "image/jpeg", data: jpeg.toString("base64"), screen: command.args.screen, width: 1280, height: 720 }
+          : { mimeType: "image/png", data: png.toString("base64"), screen: command.args.screen };
       socket.send(JSON.stringify({ type: "result", id: command.id, ok: true, result }));
     });
     const unauthorized = await fetch(`${base}/mcp`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
@@ -74,7 +77,7 @@ test("private live-view resource, auth, monitor selection and frame delivery", a
     live.on("message", (data, binary) => messages.push({ data, binary }));
     live.send(JSON.stringify({ type: "select", screen: 1 }));
     for (let i = 0; i < 80 && !messages.some(item => item.binary); i++) await new Promise(resolve => setTimeout(resolve, 25));
-    assert.ok(messages.some(item => item.binary && item.data.length > 100), "private websocket delivers a binary WebP frame");
+    assert.ok(messages.some(item => item.binary && item.data.length > 100), "private websocket delivers a binary compressed frame");
     live.close();
     const opened = await rpc(4, "tools/call", { name: "open_live_view", arguments: {} });
     assert.equal(opened.result.structuredContent.monitors.length, 2);
@@ -83,15 +86,20 @@ test("private live-view resource, auth, monitor selection and frame delivery", a
     const frame = await rpc(5, "tools/call", { name: "live_view_frame", arguments: { screen: 1 } });
     assert.equal(frame.result.isError, undefined);
     assert.equal(frame.result._meta.frame.screen, 1);
-    assert.match(frame.result._meta.frame.dataUrl, /^data:image\/webp;base64,/);
-    assert.match(frame.result.structuredContent.frame.dataUrl, /^data:image\/webp;base64,/);
+    assert.match(frame.result._meta.frame.dataUrl, /^data:image\/jpeg;base64,/);
+    assert.match(frame.result.structuredContent.frame.dataUrl, /^data:image\/jpeg;base64,/);
     assert.ok(frame.result._meta.frame.width <= 1280);
     assert.ok(!JSON.stringify(frame.result.content).includes("base64"), "frame bytes stay out of model-visible text");
-    assert.equal(commands.at(-1).command, "desktop_screenshot");
+    assert.equal(commands.at(-1).command, "desktop_stream_frame");
     assert.equal(commands.at(-1).args.screen, 1);
+    const observed = await rpc(50, "tools/call", { name: "desktop_observe", arguments: { screen: 1 } });
+    assert.equal(observed.result.structuredContent.changed, true);
+    const unchanged = await rpc(51, "tools/call", { name: "desktop_observe", arguments: { screen: 1 } });
+    assert.equal(unchanged.result.structuredContent.changed, false);
+    assert.ok(!unchanged.result.content.some(item => item.type === "image"));
     const invalid = await rpc(6, "tools/call", { name: "live_view_frame", arguments: { screen: 7 } });
     assert.equal(invalid.result.isError, true);
-    assert.ok(!commands.some(c => c.command === "desktop_screenshot" && c.args.screen === 7));
+    assert.ok(!commands.some(c => c.command === "desktop_stream_frame" && c.args.screen === 7));
   } finally {
     socket?.close(); child.kill();
     await new Promise(resolve => child.exitCode !== null ? resolve() : child.once("exit", resolve));

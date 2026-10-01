@@ -45,6 +45,7 @@ const desktopPending = new Map();
 const wss = new WebSocketServer({ noServer: true });
 const liveWss = new WebSocketServer({ noServer: true });
 const liveTickets = new Map();
+const desktopObservationCache = new Map();
 let sftpClient = null;
 let sftpConnectPromise = null;
 let lastSftpCleanupAt = 0;
@@ -60,6 +61,20 @@ function validLiveTicket(ticket) {
   const expires = liveTickets.get(ticket);
   if (!expires || expires < Date.now()) { liveTickets.delete(ticket); return false; }
   return true;
+}
+
+async function getFastDesktopFrame(screen, width = 1280, quality = 58, timeout = 12000) {
+  try {
+    const shot = await callDesktop("desktop_stream_frame", { screen, width, quality }, timeout);
+    if (!shot?.data || shot.mimeType !== "image/jpeg" || Number(shot.screen) !== screen) throw new Error("Invalid fast desktop frame");
+    return { ...shot, buffer: Buffer.from(shot.data, "base64") };
+  } catch (fastError) {
+    const shot = await callDesktop("desktop_screenshot", { screen }, timeout);
+    if (!shot?.data || shot.mimeType !== "image/png" || Number(shot.screen) !== screen) throw fastError;
+    const { data, info } = await sharp(Buffer.from(shot.data, "base64")).resize({ width, withoutEnlargement: true })
+      .webp({ quality, effort: 1 }).toBuffer({ resolveWithObject: true });
+    return { ...shot, mimeType: "image/webp", width: info.width, height: info.height, buffer: data, fallback: true };
+  }
 }
 
 function sftpConfigured() {
@@ -327,13 +342,8 @@ function makeMcpServer() {
       await liveViewState();
     }
     if (!liveMonitorCache?.monitors.some(m => m.index === screen)) throw new Error("Requested monitor is unavailable.");
-    const shot = await callDesktop("desktop_screenshot", { screen }, 20000);
-    if (!shot?.data || shot.mimeType !== "image/png") throw new Error("Desktop agent returned no PNG frame.");
-    if (Number(shot.screen) !== screen) throw new Error("Requested monitor is unavailable.");
-    const image = sharp(Buffer.from(shot.data, "base64"));
-    const { data, info } = await image.resize({ width: 1280, withoutEnlargement: true })
-      .webp({ quality: 54, effort: 2 }).toBuffer({ resolveWithObject: true });
-    const frame = { dataUrl: `data:image/webp;base64,${data.toString("base64")}`, width: info.width, height: info.height, screen, at: Date.now() };
+    const shot = await getFastDesktopFrame(screen, 1280, 54, 20000);
+    const frame = { dataUrl: `data:${shot.mimeType};base64,${shot.buffer.toString("base64")}`, width: shot.width, height: shot.height, screen, at: Date.now() };
     return {
       content: [{ type: "text", text: "Private live frame delivered to viewer." }],
       structuredContent: { frame },
@@ -590,6 +600,22 @@ function makeMcpServer() {
     const shot=await callDesktop("desktop_screenshot",{},30000);
     return {content:[{type:"image",data:shot.data,mimeType:shot.mimeType||"image/png"},{type:"text",text:JSON.stringify({x:shot.x,y:shot.y,width:shot.width,height:shot.height})}]};
   });
+  server.registerTool("desktop_observe",{
+    description:"Smartly observe one Windows monitor using a fast compressed frame. Compares a tiny visual fingerprint with the previous observation and can omit an unchanged image to reduce latency and tokens. Use after actions that may change layout; use desktop_fast_batch between observations.",
+    inputSchema:z.object({screen:z.number().int().min(0).max(15).default(0),onlyIfChanged:z.boolean().default(true),threshold:z.number().min(0).max(1).default(0.015),width:z.number().int().min(640).max(1920).default(1280),quality:z.number().int().min(25).max(85).default(58)})
+  },async ({screen,onlyIfChanged,threshold,width,quality})=>{
+    const shot=await getFastDesktopFrame(screen,width,quality,20000);
+    const fingerprint=await sharp(shot.buffer).resize(32,18,{fit:"fill"}).greyscale().raw().toBuffer();
+    const previous=desktopObservationCache.get(screen);
+    let difference=1;
+    if(previous?.length===fingerprint.length){let total=0;for(let i=0;i<fingerprint.length;i++)total+=Math.abs(fingerprint[i]-previous[i]);difference=total/(fingerprint.length*255);}
+    desktopObservationCache.set(screen,fingerprint);
+    const changed=!previous||difference>=threshold;
+    const metadata={screen,changed,difference:Number(difference.toFixed(4)),threshold,width:shot.width,height:shot.height,mimeType:shot.mimeType,at:Date.now(),fallback:!!shot.fallback};
+    const content=[{type:"text",text:JSON.stringify(metadata)}];
+    if(changed||!onlyIfChanged)content.unshift({type:"image",data:shot.buffer.toString("base64"),mimeType:shot.mimeType});
+    return {content,structuredContent:metadata};
+  });
   server.registerTool("desktop_mouse_action",{
     description:"One real Windows mouse operation: verified move then click/right/double/scroll, or drag. Coordinates are physical screen pixels including negative monitor origins. Uses one desktop round-trip. Optionally returns one screenshot AFTER the completed action. Do not capture between movement and click.",
     inputSchema:z.object({kind:z.enum(["move","click","right","double","drag","scroll"]),x:z.number().int(),y:z.number().int(),toX:z.number().int().optional(),toY:z.number().int().optional(),durationMs:z.number().int().min(0).max(10000).optional(),button:z.enum(["left","middle","right"]).optional(),delta:z.number().int().min(-12000).max(12000).optional(),horizontal:z.boolean().optional(),screenshotAfter:z.boolean().optional(),settleMs:z.number().int().min(0).max(2000).optional()})
@@ -714,12 +740,10 @@ liveWss.on("connection", socket => {
       const started = Date.now();
       const requestedScreen = monitor;
       try {
-        const shot = await callDesktop("desktop_screenshot", { screen: requestedScreen }, 12000);
-        if (!shot?.data || shot.mimeType !== "image/png" || Number(shot.screen) !== requestedScreen) throw new Error("Invalid desktop frame");
-        const frame = await sharp(Buffer.from(shot.data, "base64")).resize({ width: 1280, withoutEnlargement: true })
-          .webp({ quality: 58, effort: 1 }).toBuffer();
+        const shot = await getFastDesktopFrame(requestedScreen, 1280, 58, 12000);
+        const frame = shot.buffer;
         if (socket.readyState !== WebSocket.OPEN) break;
-        sendJson({ type: "frame", screen: requestedScreen, at: Date.now(), bytes: frame.length, latencyMs: Date.now() - started });
+        sendJson({ type: "frame", screen: requestedScreen, at: Date.now(), bytes: frame.length, latencyMs: Date.now() - started, mimeType: shot.mimeType, width: shot.width, height: shot.height, fallback: !!shot.fallback });
         socket.send(frame, { binary: true });
       } catch (error) {
         sendJson({ type: "error", message: error.message });
