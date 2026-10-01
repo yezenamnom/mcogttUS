@@ -48,7 +48,7 @@ function callDesktop(command, args = {}, timeoutMs = 30000) {
 }
 
 function makeMcpServer() {
-  const server = new McpServer({ name: "gpt-us-browser-desktop", version: "0.7.2" });
+  const server = new McpServer({ name: "gpt-us-browser-desktop", version: "0.7.3" });
 
   server.registerTool("get_page", {
     description: "Read the active Comet tab: title, URL, visible text, and interactive elements.",
@@ -106,7 +106,7 @@ function makeMcpServer() {
   }, async args => ({ content: [{ type: "text", text: JSON.stringify(await callBrowser("press_key", args), null, 2) }] }));
 
   server.registerTool("batch_actions", {
-    description: "Execute browser OR Windows desktop commands sequentially. DESKTOP COMMANDS SUPPORTED HERE: desktop_info, desktop_screen_size, desktop_screenshot, desktop_move_mouse, desktop_click, desktop_mouse_path, desktop_type_text, desktop_key_combo, desktop_file_exists, desktop_list_files. Any command beginning desktop_ is routed to the connected Windows Desktop Bridge; other commands go to Comet. This tool is the compatibility path when separate desktop_* tools are not shown by the client.",
+    description: "Execute browser OR Windows desktop commands sequentially. DESKTOP COMMANDS SUPPORTED HERE: desktop_info, desktop_monitors, desktop_screen_size, desktop_screenshot, desktop_move_mouse, desktop_click, desktop_scroll, desktop_mouse_path, desktop_type_text, desktop_key_combo, desktop_clipboard_get/set, desktop_windows/window_*, desktop_processes, desktop_system_info, desktop_file_*, desktop_create_folder, desktop_open_path. Any command beginning desktop_ is routed to the connected Windows Desktop Bridge; other commands go to Comet. This tool is the compatibility path when separate desktop_* tools are not shown by the client.",
     inputSchema: z.object({ actions:z.array(z.object({ command:z.string(), args:z.record(z.string(),z.any()).optional() })).min(1).max(50) })
   }, async ({ actions }) => {
     // Preserve the extension's fast native batching when every action is a browser action.
@@ -181,6 +181,12 @@ function makeMcpServer() {
   const desktopText = async (command,args={},timeout=30000) => ({ content:[{type:"text",text:JSON.stringify(await callDesktop(command,args,timeout),null,2)}] });
   server.registerTool("desktop_info",{description:"Report Windows desktop-agent connection and machine info.",inputSchema:z.object({})},async()=>desktopText("desktop_info"));
   server.registerTool("desktop_screen_size",{description:"Get the Windows virtual desktop dimensions.",inputSchema:z.object({})},async()=>desktopText("desktop_screen_size"));
+  server.registerTool("desktop_monitors",{description:"List Windows monitors with index, primary flag and coordinates.",inputSchema:z.object({})},async()=>desktopText("desktop_monitors"));
+  server.registerTool("desktop_clipboard_get",{description:"Read text from the Windows clipboard when clipboard permission is enabled.",inputSchema:z.object({})},async()=>desktopText("desktop_clipboard_get"));
+  server.registerTool("desktop_clipboard_set",{description:"Set Windows clipboard text when clipboard permission is enabled.",inputSchema:z.object({text:z.string().max(20000)})},async args=>desktopText("desktop_clipboard_set",args));
+  server.registerTool("desktop_windows",{description:"List visible top-level Windows application windows.",inputSchema:z.object({})},async()=>desktopText("desktop_windows"));
+  server.registerTool("desktop_processes",{description:"List Windows processes.",inputSchema:z.object({})},async()=>desktopText("desktop_processes"));
+  server.registerTool("desktop_system_info",{description:"Read basic Windows system and drive information.",inputSchema:z.object({})},async()=>desktopText("desktop_system_info"));
   server.registerTool("desktop_screenshot",{description:"Capture the full Windows desktop.",inputSchema:z.object({})},async()=>{
     const shot=await callDesktop("desktop_screenshot",{},30000);
     return {content:[{type:"image",data:shot.data,mimeType:shot.mimeType||"image/png"},{type:"text",text:JSON.stringify({x:shot.x,y:shot.y,width:shot.width,height:shot.height})}]};
@@ -209,7 +215,7 @@ const httpServer = http.createServer((req, res) => {
     res.end(JSON.stringify({
       ok: true,
       service: "comet-chatgpt-bridge",
-      version: "0.7.2",
+      version: "0.7.3",
       mcp: "ready",
       browserConnected: !!browserSocket && browserSocket.readyState === WebSocket.OPEN,
       browserConnectedAt,
@@ -222,7 +228,7 @@ const httpServer = http.createServer((req, res) => {
 
   if (url.pathname === "/" && req.method === "GET") {
     res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({ service: "comet-chatgpt-bridge", version: "0.7.2", status: "ok", mcp: "/mcp" }));
+    res.end(JSON.stringify({ service: "comet-chatgpt-bridge", version: "0.7.3", status: "ok", mcp: "/mcp" }));
     return;
   }
 
@@ -283,7 +289,7 @@ wss.on("connection", (socket, req) => {
 });
 
 httpServer.listen(PORT, "0.0.0.0", () => {
-  console.log(`Comet ChatGPT Bridge v0.7.2 listening on 0.0.0.0:${PORT}`);
+  console.log(`Comet ChatGPT Bridge v0.7.3 listening on 0.0.0.0:${PORT}`);
   console.log("MCP v2 handler ready at /mcp | WSS /browser + /desktop | health /health");
 });
 
