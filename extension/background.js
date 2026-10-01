@@ -1,7 +1,7 @@
 let ws = null;
 let reconnectTimer = null;
 let pingTimer = null;
-const EXT_VERSION = "0.6.2";
+const EXT_VERSION = "0.6.3";
 const domState = new Map();
 const cdpAttached = new Set();
 
@@ -148,20 +148,36 @@ function typeTarget(selector,text,clearFirst) {
 
 
 function visualCursor(x,y,click=false) {
-  let marker=document.getElementById("__cgb_cursor");
-  if(!marker){
-    marker=document.createElement("div"); marker.id="__cgb_cursor";
-    marker.innerHTML='<div style="width:0;height:0;border-top:8px solid transparent;border-bottom:8px solid transparent;border-left:14px solid #111;filter:drop-shadow(0 0 1px white) drop-shadow(0 1px 2px rgba(0,0,0,.35));transform:rotate(-45deg);transform-origin:2px 8px"></div>';
-    Object.assign(marker.style,{position:"fixed",width:"24px",height:"24px",zIndex:"2147483647",pointerEvents:"none",transition:"left .16s ease-out,top .16s ease-out",left:"0px",top:"0px"});
-    document.documentElement.appendChild(marker);
+  x=Number(x); y=Number(y);
+  let host=document.getElementById("__cgb_cursor_host");
+  let root, marker;
+  if(!host){
+    host=document.createElement("div");
+    host.id="__cgb_cursor_host";
+    host.setAttribute("aria-hidden","true");
+    host.style.setProperty("all","initial","important");
+    host.style.setProperty("position","fixed","important");
+    host.style.setProperty("inset","0","important");
+    host.style.setProperty("width","0","important");
+    host.style.setProperty("height","0","important");
+    host.style.setProperty("z-index","2147483647","important");
+    host.style.setProperty("pointer-events","none","important");
+    (document.documentElement||document.body).appendChild(host);
+    root=host.attachShadow({mode:"open"});
+    const style=document.createElement("style");
+    style.textContent=`:host{all:initial!important}#cursor{position:fixed!important;left:0;top:0;width:28px;height:34px;pointer-events:none!important;z-index:2147483647!important;transition:transform .12s ease-out!important;filter:drop-shadow(0 1px 2px rgba(0,0,0,.55))!important;will-change:transform!important}#cursor svg{display:block!important;width:28px!important;height:34px!important;overflow:visible!important}.ring{position:fixed!important;width:10px;height:10px;border:3px solid #1677ff;border-radius:999px;pointer-events:none!important;z-index:2147483646!important;transform:translate(-50%,-50%) scale(.4);opacity:1;animation:cgbclick .38s ease-out forwards}@keyframes cgbclick{to{transform:translate(-50%,-50%) scale(3.6);opacity:0}}`;
+    marker=document.createElement("div"); marker.id="cursor";
+    marker.innerHTML='<svg viewBox="0 0 28 34" xmlns="http://www.w3.org/2000/svg"><path d="M2 1.5v25.2l6.8-6.4 4.7 10.7 5.2-2.4-4.7-10.3h10.2L2 1.5Z" fill="#fff" stroke="#111" stroke-width="2.2" stroke-linejoin="round"/></svg>';
+    root.append(style,marker);
+  } else {
+    root=host.shadowRoot; marker=root?.getElementById("cursor");
   }
-  marker.style.left=Number(x)+"px"; marker.style.top=Number(y)+"px";
-  if(click){
-    const ring=document.createElement("div");
-    Object.assign(ring.style,{position:"fixed",left:Number(x)+"px",top:Number(y)+"px",width:"10px",height:"10px",border:"2px solid #111",borderRadius:"50%",zIndex:"2147483646",pointerEvents:"none",transform:"translate(-50%,-50%)",transition:"all .28s ease-out",opacity:"1"});
-    document.documentElement.appendChild(ring);
-    requestAnimationFrame(()=>{ring.style.width="34px";ring.style.height="34px";ring.style.opacity="0";});
-    setTimeout(()=>ring.remove(),320);
+  if(!marker) return false;
+  marker.style.setProperty("transform",`translate3d(${x}px,${y}px,0)`,"important");
+  if(click && root){
+    const ring=document.createElement("div"); ring.className="ring";
+    ring.style.setProperty("left",x+"px","important"); ring.style.setProperty("top",y+"px","important");
+    root.appendChild(ring); setTimeout(()=>ring.remove(),450);
   }
   return true;
 }
