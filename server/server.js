@@ -20,7 +20,9 @@ const HOSTINGER_SFTP_USER = process.env.HOSTINGER_SFTP_USER || "";
 const HOSTINGER_SFTP_PRIVATE_KEY = (process.env.HOSTINGER_SFTP_PRIVATE_KEY || "").replace(/\\n/g, "\n");
 const HOSTINGER_SFTP_DIR = process.env.HOSTINGER_SFTP_DIR || "";
 const HOSTINGER_SCREENSHOT_BASE_URL = (process.env.HOSTINGER_SCREENSHOT_BASE_URL || "").replace(/\/$/, "");
-const LIVE_VIEW_URI = "ui://gpt-us/live-view-v5.html";
+const LIVE_VIEW_URI = "ui://gpt-us/live-view-v6.html";
+const PUBLIC_ORIGIN = (process.env.OAUTH_ISSUER || "https://mcogttus-production.up.railway.app").replace(/\/$/, "");
+const LIVE_WS_ORIGIN = PUBLIC_ORIGIN.replace(/^https:/, "wss:").replace(/^http:/, "ws:");
 const LIVE_VIEW_HTML = readFileSync(new URL("./live-view.html", import.meta.url), "utf8");
 const SMART_URI = "ui://gpt-us/smart-actions.html";
 const SMART_HTML = readFileSync(new URL("./smart-actions.html", import.meta.url), "utf8");
@@ -41,9 +43,24 @@ let desktopConnectedAt = null;
 const pending = new Map();
 const desktopPending = new Map();
 const wss = new WebSocketServer({ noServer: true });
+const liveWss = new WebSocketServer({ noServer: true });
+const liveTickets = new Map();
 let sftpClient = null;
 let sftpConnectPromise = null;
 let lastSftpCleanupAt = 0;
+
+function issueLiveTicket() {
+  const ticket = crypto.randomBytes(32).toString("base64url");
+  const streamExpiresAt = Date.now() + 5 * 60 * 1000;
+  liveTickets.set(ticket, streamExpiresAt);
+  return { streamUrl: `${LIVE_WS_ORIGIN}/live?ticket=${ticket}`, streamExpiresAt };
+}
+
+function validLiveTicket(ticket) {
+  const expires = liveTickets.get(ticket);
+  if (!expires || expires < Date.now()) { liveTickets.delete(ticket); return false; }
+  return true;
+}
 
 function sftpConfigured() {
   return !!(
@@ -263,9 +280,9 @@ function makeMcpServer() {
     mimeType: "text/html;profile=mcp-app",
     text: LIVE_VIEW_HTML.replace('__GPT_US_BOOTSTRAP_STATE__', JSON.stringify(await liveViewState()).replace(/</g, '\\u003c')),
     _meta: {
-      ui: { csp: { connectDomains: [], resourceDomains: [] } },
+      ui: { csp: { connectDomains: [LIVE_WS_ORIGIN], resourceDomains: [] } },
       "openai/ui": { availableDisplayModes: ["inline", "fullscreen"], preferredDisplayMode: "fullscreen" },
-      "openai/widgetCSP": { connect_domains: [], resource_domains: [] }
+      "openai/widgetCSP": { connect_domains: [LIVE_WS_ORIGIN], resource_domains: [] }
     }
   }] }));
 
@@ -281,7 +298,7 @@ function makeMcpServer() {
       width: Number(m.width), height: Number(m.height), primary: !!m.primary
     })).filter(m => Number.isInteger(m.index) && m.index >= 0 && m.index < 16) : [];
     liveMonitorCache = { socket: desktopSocket, monitors: safeMonitors, at: Date.now() };
-    return { connected: true, monitors: safeMonitors };
+    return { connected: true, monitors: safeMonitors, ...issueLiveTicket() };
   }
 
   server.registerTool("open_live_view", {
@@ -670,12 +687,59 @@ const httpServer = http.createServer(async (req, res) => {
 httpServer.on("upgrade", (req, socket, head) => {
   let url;
   try { url = new URL(req.url || "/", "http://localhost"); } catch { socket.destroy(); return; }
+  if (url.pathname === "/live") {
+    if (!validLiveTicket(url.searchParams.get("ticket") || "")) {
+      socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n"); socket.destroy(); return;
+    }
+    liveWss.handleUpgrade(req, socket, head, ws => liveWss.emit("connection", ws, req));
+    return;
+  }
   if (!["/browser","/desktop"].includes(url.pathname) || !BRIDGE_TOKEN || url.searchParams.get("token") !== BRIDGE_TOKEN) {
     socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
     socket.destroy();
     return;
   }
   wss.handleUpgrade(req, socket, head, ws => wss.emit("connection", ws, req));
+});
+
+liveWss.on("connection", socket => {
+  let monitor = 0;
+  let active = true;
+  let pumping = false;
+  const sendJson = value => { if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(value)); };
+  const pump = async () => {
+    if (pumping) return;
+    pumping = true;
+    while (active && socket.readyState === WebSocket.OPEN) {
+      const started = Date.now();
+      const requestedScreen = monitor;
+      try {
+        const shot = await callDesktop("desktop_screenshot", { screen: requestedScreen }, 12000);
+        if (!shot?.data || shot.mimeType !== "image/png" || Number(shot.screen) !== requestedScreen) throw new Error("Invalid desktop frame");
+        const frame = await sharp(Buffer.from(shot.data, "base64")).resize({ width: 1280, withoutEnlargement: true })
+          .webp({ quality: 58, effort: 1 }).toBuffer();
+        if (socket.readyState !== WebSocket.OPEN) break;
+        sendJson({ type: "frame", screen: requestedScreen, at: Date.now(), bytes: frame.length, latencyMs: Date.now() - started });
+        socket.send(frame, { binary: true });
+      } catch (error) {
+        sendJson({ type: "error", message: error.message });
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+    }
+    pumping = false;
+  };
+  socket.on("message", raw => {
+    try {
+      const message = JSON.parse(raw.toString());
+      if (message.type === "select" && Number.isInteger(message.screen) && message.screen >= 0 && message.screen < 16) {
+        monitor = message.screen; active = true; void pump();
+      } else if (message.type === "pause") active = false;
+      else if (message.type === "resume") { active = true; void pump(); }
+    } catch {}
+  });
+  socket.on("close", () => { active = false; });
+  socket.on("error", () => { active = false; });
+  sendJson({ type: "ready" });
 });
 
 wss.on("connection", (socket, req) => {
