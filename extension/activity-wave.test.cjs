@@ -19,6 +19,12 @@ test('wave is click-through, idle-hidden, reused and times out',()=>{
  vm.runInContext(source,context);
  assert.equal(host.hidden,true);
  assert.match(host.style.cssText,/pointer-events:none/);
+ assert.match(host.style.cssText,/inset:0/);
+ assert.match(host.innerHTML,/class="edge top"/);
+ assert.match(host.innerHTML,/class="edge bottom"/);
+ assert.match(host.innerHTML,/class="side left"/);
+ assert.match(host.innerHTML,/class="side right"/);
+ assert.match(host.innerHTML,/#aa5fe9/);
  assert.match(host.innerHTML,/prefers-reduced-motion/);
  context.__gptusShowWave();assert.equal(host.hidden,false);
  timer();assert.equal(host.hidden,true);
