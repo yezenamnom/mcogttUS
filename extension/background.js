@@ -1,7 +1,7 @@
 let ws = null;
 let reconnectTimer = null;
 let pingTimer = null;
-const EXT_VERSION = "0.7.0";
+const EXT_VERSION = "0.8.0";
 const domState = new Map();
 const cdpAttached = new Set();
 
