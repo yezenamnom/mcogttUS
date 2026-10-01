@@ -133,7 +133,7 @@ function callDesktop(command, args = {}, timeoutMs = 30000) {
 }
 
 function makeMcpServer() {
-  const server = new McpServer({ name: "gpt-us-browser-desktop", version: "0.7.16" });
+  const server = new McpServer({ name: "gpt-us-browser-desktop", version: "0.7.17" });
 
   server.registerTool("get_page", {
     description: "Read the active Comet tab: title, URL, visible text, and interactive elements.",
@@ -332,6 +332,7 @@ function makeMcpServer() {
   server.registerTool("cdp_attach",{description:"Attach Chrome DevTools Protocol to a target tab.",inputSchema:z.object({tabId:optTabId})},async args=>textResult("cdp_attach",args));
   server.registerTool("cdp_detach",{description:"Detach Chrome DevTools Protocol from a target tab.",inputSchema:z.object({tabId:optTabId})},async args=>textResult("cdp_detach",args));
   server.registerTool("cdp_status",{description:"Check CDP attachment status.",inputSchema:z.object({tabId:optTabId})},async args=>textResult("cdp_status",args));
+  server.registerTool("network_logs",{description:"Read recent browser network requests captured through Chrome DevTools Protocol.",inputSchema:z.object({tabId:optTabId,limit:z.number().int().min(1).max(200).optional(),clear:z.boolean().optional()})},async args=>textResult("network_logs",args));
   server.registerTool("cdp_command",{description:"Send an allowed Chrome DevTools Protocol command to the target Comet tab.",inputSchema:z.object({tabId:optTabId,method:z.string(),params:z.record(z.string(),z.any()).optional()})},async args=>textResult("cdp_command",args));
 
   const desktopText = async (command,args={},timeout=30000) => ({ content:[{type:"text",text:JSON.stringify(await callDesktop(command,args,timeout),null,2)}] });
@@ -371,7 +372,7 @@ const httpServer = http.createServer((req, res) => {
     res.end(JSON.stringify({
       ok: true,
       service: "comet-chatgpt-bridge",
-      version: "0.7.16",
+      version: "0.7.17",
       mcp: "ready",
       browserConnected: !!browserSocket && browserSocket.readyState === WebSocket.OPEN,
       browserConnectedAt,
@@ -384,7 +385,7 @@ const httpServer = http.createServer((req, res) => {
 
   if (url.pathname === "/" && req.method === "GET") {
     res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({ service: "comet-chatgpt-bridge", version: "0.7.16", status: "ok", mcp: "/mcp" }));
+    res.end(JSON.stringify({ service: "comet-chatgpt-bridge", version: "0.7.17", status: "ok", mcp: "/mcp" }));
     return;
   }
 
@@ -445,7 +446,7 @@ wss.on("connection", (socket, req) => {
 });
 
 httpServer.listen(PORT, "0.0.0.0", () => {
-  console.log(`Comet ChatGPT Bridge v0.7.16 listening on 0.0.0.0:${PORT}`);
+  console.log(`Comet ChatGPT Bridge v0.7.17 listening on 0.0.0.0:${PORT}`);
   console.log("MCP v2 handler ready at /mcp | WSS /browser + /desktop | health /health");
 });
 
