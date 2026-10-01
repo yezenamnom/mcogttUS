@@ -30,7 +30,7 @@ function callBrowser(command, args = {}, timeoutMs = 20000) {
 }
 
 function makeMcpServer() {
-  const server = new McpServer({ name: "comet-browser", version: "0.5.0" });
+  const server = new McpServer({ name: "comet-browser", version: "0.6.0" });
 
   server.registerTool("get_page", {
     description: "Read the active Comet tab: title, URL, visible text, and interactive elements.",
@@ -121,6 +121,25 @@ function makeMcpServer() {
   server.registerTool("select", { description: "Choose a value in a select element.", inputSchema: z.object({ selector: z.string(), value: z.string() }) },
     async args => ({ content: [{ type: "text", text: JSON.stringify(await callBrowser("select", args), null, 2) }] }));
 
+
+  const optTabId = z.number().int().optional();
+  const textResult = async (command,args={},timeout=20000) => ({ content:[{type:"text",text:JSON.stringify(await callBrowser(command,args,timeout),null,2)}] });
+
+  server.registerTool("bridge_info",{description:"Report extension capabilities and connection state.",inputSchema:z.object({})},async()=>textResult("bridge_info"));
+  server.registerTool("get_viewport",{description:"Get viewport size, DPR, scroll position and document dimensions.",inputSchema:z.object({tabId:optTabId})},async args=>textResult("get_viewport",args));
+  server.registerTool("element_map",{description:"Map interactive elements with bridge IDs and rectangles.",inputSchema:z.object({tabId:optTabId})},async args=>textResult("element_map",args));
+  server.registerTool("dom_watch",{description:"Capture page state and report whether it changed.",inputSchema:z.object({tabId:optTabId,maxChars:z.number().int().min(1000).max(100000).optional()})},async args=>textResult("dom_watch",args));
+  server.registerTool("dom_diff",{description:"Return compact changes since the previous page baseline.",inputSchema:z.object({tabId:optTabId,maxChars:z.number().int().min(1000).max(100000).optional()})},async args=>textResult("dom_diff",args));
+  server.registerTool("wait_for",{description:"Wait for a selector, page text, or page completion.",inputSchema:z.object({tabId:optTabId,selector:z.string().optional(),text:z.string().optional(),timeoutMs:z.number().int().min(100).max(60000).optional(),intervalMs:z.number().int().min(50).max(2000).optional()})},async args=>textResult("wait_for",args,65000));
+  server.registerTool("mouse_action",{description:"Advanced mouse action at viewport coordinates.",inputSchema:z.object({tabId:optTabId,kind:z.enum(["double","right","mousedown","mouseup","mousemove","mouseover"]),x:z.number(),y:z.number(),button:z.enum(["left","middle","right"]).optional()})},async args=>textResult("mouse_action",args));
+  server.registerTool("drag_drop",{description:"Drag from one viewport coordinate to another.",inputSchema:z.object({tabId:optTabId,fromX:z.number(),fromY:z.number(),toX:z.number(),toY:z.number()})},async args=>textResult("drag_drop",args));
+  server.registerTool("key_combo",{description:"Send a keyboard shortcut to a tab.",inputSchema:z.object({tabId:optTabId,keys:z.array(z.string()).min(1).max(8),selector:z.string().optional()})},async args=>textResult("key_combo",args));
+  server.registerTool("zoom",{description:"Set tab zoom; 0 resets and 1 means 100 percent.",inputSchema:z.object({tabId:optTabId,factor:z.number().min(0).max(5)})},async args=>textResult("zoom",args));
+  server.registerTool("parallel_actions",{description:"Execute independent commands concurrently, typically across tabs.",inputSchema:z.object({actions:z.array(z.object({command:z.string(),args:z.record(z.string(),z.any()).optional()})).min(1).max(30)})},async args=>textResult("parallel_actions",args,60000));
+  server.registerTool("cdp_attach",{description:"Attach Chrome DevTools Protocol to a target tab.",inputSchema:z.object({tabId:optTabId})},async args=>textResult("cdp_attach",args));
+  server.registerTool("cdp_detach",{description:"Detach Chrome DevTools Protocol from a target tab.",inputSchema:z.object({tabId:optTabId})},async args=>textResult("cdp_detach",args));
+  server.registerTool("cdp_status",{description:"Check CDP attachment status.",inputSchema:z.object({tabId:optTabId})},async args=>textResult("cdp_status",args));
+
   return server;
 }
 
@@ -137,7 +156,7 @@ const httpServer = http.createServer((req, res) => {
     res.end(JSON.stringify({
       ok: true,
       service: "comet-chatgpt-bridge",
-      version: "0.5.0",
+      version: "0.6.0",
       mcp: "ready",
       browserConnected: !!browserSocket && browserSocket.readyState === WebSocket.OPEN,
       browserConnectedAt,
@@ -148,7 +167,7 @@ const httpServer = http.createServer((req, res) => {
 
   if (url.pathname === "/" && req.method === "GET") {
     res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({ service: "comet-chatgpt-bridge", version: "0.5.0", status: "ok", mcp: "/mcp" }));
+    res.end(JSON.stringify({ service: "comet-chatgpt-bridge", version: "0.6.0", status: "ok", mcp: "/mcp" }));
     return;
   }
 
@@ -200,7 +219,7 @@ wss.on("connection", socket => {
 });
 
 httpServer.listen(PORT, "0.0.0.0", () => {
-  console.log(`Comet ChatGPT Bridge v0.5.0 listening on 0.0.0.0:${PORT}`);
+  console.log(`Comet ChatGPT Bridge v0.6.0 listening on 0.0.0.0:${PORT}`);
   console.log("MCP v2 handler ready at /mcp | WSS /browser | health /health");
 });
 
