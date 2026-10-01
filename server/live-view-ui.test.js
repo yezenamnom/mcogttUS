@@ -8,7 +8,7 @@ function harness(initial=null, toolResult=null) {
   const script=html.match(/<script>([\s\S]*?)<\/script>/)?.[1]?.replace('__GPT_US_BOOTSTRAP_STATE__',JSON.stringify(initial));
   const calls=[]; const sockets=[]; const timers=new Map(); let timerId=0;
   const node=()=>({textContent:'',value:'',src:'',options:[],classList:{ready:false,add(){this.ready=true},remove(){this.ready=false}},replaceChildren(...items){this.options=items},addEventListener(){}});
-  const elements=Object.fromEntries(['screen','frame','message','status','monitor','toggle'].map(id=>[id,node()]));
+  const elements=Object.fromEntries(['screen','frame','message','status','monitor','toggle','audio'].map(id=>[id,node()]));
   class FakeWebSocket { static OPEN=1; constructor(url){this.url=url;this.readyState=1;this.sent=[];sockets.push(this)} send(value){this.sent.push(JSON.parse(value))} close(){this.readyState=3} }
   const window={parent:{postMessage(){}},addEventListener(){},openai:{async callTool(name,args){calls.push({name,args});return {structuredContent:toolResult};}}};
   class FakeFileReader { readAsDataURL(){this.result='data:image/webp;base64,QUJD';this.onload?.()} }
@@ -32,7 +32,7 @@ test('viewer times out a stalled ChatGPT state call and schedules retry',async()
   const html=readFileSync(new URL('./live-view.html',import.meta.url),'utf8');
   const script=html.match(/<script>([\s\S]*?)<\/script>/)?.[1]?.replace('__GPT_US_BOOTSTRAP_STATE__','null');
   const timers=new Map();let timerId=0;const node=()=>({textContent:'',classList:{add(){},remove(){}},replaceChildren(){},addEventListener(){}});
-  const elements=Object.fromEntries(['screen','frame','message','status','monitor','toggle'].map(id=>[id,node()]));
+  const elements=Object.fromEntries(['screen','frame','message','status','monitor','toggle','audio'].map(id=>[id,node()]));
   const window={parent:{postMessage(){}},addEventListener(){},openai:{callTool(){return new Promise(()=>{});}}};
   vm.runInNewContext(script,{window,WebSocket:class{},Blob:class{},FileReader:class{},document:{hidden:false,getElementById:id=>elements[id],createElement:node},performance:{now:()=>5},setTimeout(fn){const id=++timerId;timers.set(id,fn);return id},clearTimeout(id){timers.delete(id)},Map,Promise,Error,String,Number,Math,JSON});
   const timeout=timers.entries().next().value;timeout[1]();

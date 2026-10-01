@@ -27,6 +27,7 @@
     <h1>الكمبيوتر المباشر</h1>
     <label for="monitor">الشاشة</label><select id="monitor" aria-label="اختر الشاشة"></select>
     <button id="toggle" type="button">إيقاف مؤقت</button>
+    <button id="audio" type="button">تشغيل الصوت</button>
     <span class="badge" id="status" role="status">جارٍ الاتصال…</span>
   </div>
   <div class="screen" id="screen"><img id="frame" alt="عرض مباشر لشاشة الكمبيوتر"><div class="message" id="message">بانتظار الاتصال بالكمبيوتر…</div></div>
@@ -42,6 +43,10 @@
       let timer = null;
       let stream = null;
       let pendingFrameInfo = null;
+      let pendingPacketInfo = null;
+      let audioContext = null;
+      let audioEnabled = false;
+      let nextAudioTime = 0;
       let lastFrameAt = 0;
       let measuredFps = 0;
       const screen = document.getElementById('screen');
@@ -50,6 +55,23 @@
       const status = document.getElementById('status');
       const select = document.getElementById('monitor');
       const toggle = document.getElementById('toggle');
+      const audioButton = document.getElementById('audio');
+      function playAudio(arrayBuffer, info) {
+        if (!audioEnabled || !audioContext || !info?.sampleRate || !info?.channels) return;
+        const bytesPerSample = Math.max(2, Number(info.bits || 32) / 8);
+        const frames = Math.floor(arrayBuffer.byteLength / (bytesPerSample * info.channels));
+        if (!frames) return;
+        const output = audioContext.createBuffer(info.channels, frames, info.sampleRate);
+        const view = new DataView(arrayBuffer);
+        const isFloat = String(info.encoding || '').toLowerCase().includes('float');
+        for (let frameIndex = 0; frameIndex < frames; frameIndex++) for (let channel = 0; channel < info.channels; channel++) {
+          const offset = (frameIndex * info.channels + channel) * bytesPerSample;
+          output.getChannelData(channel)[frameIndex] = isFloat && bytesPerSample === 4 ? view.getFloat32(offset, true) : bytesPerSample === 2 ? view.getInt16(offset, true) / 32768 : 0;
+        }
+        const source = audioContext.createBufferSource(); source.buffer = output; source.connect(audioContext.destination);
+        if (nextAudioTime < audioContext.currentTime || nextAudioTime > audioContext.currentTime + 0.4) nextAudioTime = audioContext.currentTime + 0.03;
+        source.start(nextAudioTime); nextAudioTime += output.duration;
+      }
       function withTimeout(promise, milliseconds) {
         return new Promise((resolve, reject) => {
           const timeout = setTimeout(() => reject(new Error('انتهت مهلة استجابة ChatGPT للوحة')), milliseconds);
@@ -119,11 +141,15 @@
           if (typeof event.data === 'string') {
             try {
               const data = JSON.parse(event.data);
-              if (data.type === 'frame') pendingFrameInfo = data;
+              if (data.type === 'frame') { pendingFrameInfo = data; pendingPacketInfo = data; }
+              else if (data.type === 'audio') pendingPacketInfo = data;
               else if (data.type === 'error') { status.textContent = 'خطأ في البث'; message.textContent = data.message; }
             } catch {}
             return;
           }
+          if (!pendingPacketInfo) return;
+          const packetInfo = pendingPacketInfo; pendingPacketInfo = null;
+          if (packetInfo.type === 'audio') { playAudio(event.data, packetInfo); return; }
           if (!pendingFrameInfo || pendingFrameInfo.screen !== monitor) return;
           const reader = new FileReader();
           reader.onload = () => { frame.src = reader.result; };
@@ -168,6 +194,12 @@
           clearTimeout(timer);
           if (stream?.readyState === WebSocket.OPEN) stream.send(JSON.stringify({ type: 'pause' }));
         }
+      });
+      audioButton.addEventListener('click', async () => {
+        if (!audioContext) audioContext = new AudioContext({ latencyHint: 'interactive' });
+        audioEnabled = !audioEnabled;
+        if (audioEnabled) await audioContext.resume(); else await audioContext.suspend();
+        nextAudioTime = 0; audioButton.textContent = audioEnabled ? 'كتم الصوت' : 'تشغيل الصوت';
       });
       window.addEventListener('pagehide', () => { active = false; clearTimeout(timer); closeStream(); });
       configure(window.openai?.toolOutput || window.openai?.toolResponseMetadata || embeddedState);

@@ -5,6 +5,11 @@ internal static partial class Program
 {
  static async Task<object> MouseAction(JsonElement a)
  {
+  if(S(a,"kind")=="live_stream_start"){
+   LiveStream?.Start(I(a,"screen",0),I(a,"fps",60),I(a,"width",1024),I(a,"quality",48),B(a,"audio",true),AgentToken);
+   return new{started=LiveStream?.Running??false,targetFps=I(a,"fps",60),audio=B(a,"audio",true)};
+  }
+  if(S(a,"kind")=="live_stream_stop"){LiveStream?.Stop();return new{stopped=true};}
   if(S(a,"kind")=="report")return WorkspaceReport();
   if(S(a,"kind")=="save_report")return SaveBrowserReport(a);
   if(S(a,"kind")=="report_latest")return ReadLatestReport(a);
@@ -46,3 +51,4 @@ internal static partial class Program
    uiVerified=false};
  }
 }
+
