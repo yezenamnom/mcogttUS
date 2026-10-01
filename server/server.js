@@ -20,7 +20,7 @@ const HOSTINGER_SFTP_USER = process.env.HOSTINGER_SFTP_USER || "";
 const HOSTINGER_SFTP_PRIVATE_KEY = (process.env.HOSTINGER_SFTP_PRIVATE_KEY || "").replace(/\\n/g, "\n");
 const HOSTINGER_SFTP_DIR = process.env.HOSTINGER_SFTP_DIR || "";
 const HOSTINGER_SCREENSHOT_BASE_URL = (process.env.HOSTINGER_SCREENSHOT_BASE_URL || "").replace(/\/$/, "");
-const LIVE_VIEW_URI = "ui://gpt-us/live-view-v3.html";
+const LIVE_VIEW_URI = "ui://gpt-us/live-view-v4.html";
 const LIVE_VIEW_HTML = readFileSync(new URL("./live-view.html", import.meta.url), "utf8");
 const SMART_URI = "ui://gpt-us/smart-actions.html";
 const SMART_HTML = readFileSync(new URL("./smart-actions.html", import.meta.url), "utf8");
@@ -261,7 +261,7 @@ function makeMcpServer() {
   }, async () => ({ contents: [{
     uri: LIVE_VIEW_URI,
     mimeType: "text/html;profile=mcp-app",
-    text: LIVE_VIEW_HTML,
+    text: LIVE_VIEW_HTML.replace('__GPT_US_BOOTSTRAP_STATE__', JSON.stringify(await liveViewState()).replace(/</g, '\\u003c')),
     _meta: { "openai/ui": { availableDisplayModes: ["inline", "fullscreen"], preferredDisplayMode: "fullscreen" } }
   }] }));
 
