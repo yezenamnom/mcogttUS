@@ -86,9 +86,11 @@ function makeMcpServer() {
       ] };
     }
     const shot = await callBrowser("screenshot");
-    const match = /^data:(image\\/png);base64,(.+)$/.exec(shot?.dataUrl || "");
-    if (!match) throw new Error("Browser did not return a valid PNG screenshot");
-    return { content: [{ type: "image", data: match[2], mimeType: match[1] }] };
+    const prefix = "data:image/png;base64,";
+    const dataUrl = shot?.dataUrl || "";
+    if (!dataUrl.startsWith(prefix)) throw new Error("Browser did not return a valid PNG screenshot");
+    const imageData = dataUrl.slice(prefix.length);
+    return { content: [{ type: "image", data: imageData, mimeType: "image/png" }] };
   });
 
   server.registerTool("move_mouse", {
