@@ -49,7 +49,7 @@ function callDesktop(command, args = {}, timeoutMs = 30000) {
 }
 
 function makeMcpServer() {
-  const server = new McpServer({ name: "gpt-us-browser-desktop", version: "0.7.9" });
+  const server = new McpServer({ name: "gpt-us-browser-desktop", version: "0.7.10" });
 
   server.registerTool("get_page", {
     description: "Read the active Comet tab: title, URL, visible text, and interactive elements.",
@@ -75,9 +75,30 @@ function makeMcpServer() {
     description: "Capture the primary Windows desktop monitor as a PNG image.",
     inputSchema: z.object({})
   }, async () => {
-    const shot = await callDesktop("desktop_screenshot", { screen: 1 }, 30000);
-    if (!shot || !shot.data) throw new Error("Desktop agent did not return PNG image data");
-    return { content: [{ type: "image", data: String(shot.data), mimeType: "image/png" }] };
+    // Let the desktop agent capture the full virtual desktop instead of hard-coding
+    // monitor index 1. Return both MCP ImageContent and small diagnostics so clients
+    // that fail to render images still prove that the capture reached the MCP layer.
+    const shot = await callDesktop("desktop_screenshot", {}, 30000);
+    if (!shot?.data) throw new Error("Desktop agent did not return PNG image data");
+    const mimeType = shot.mimeType || "image/png";
+    return {
+      content: [
+        { type: "image", data: String(shot.data), mimeType },
+        {
+          type: "text",
+          text: JSON.stringify({
+            screenshot: true,
+            mimeType,
+            screen: shot.screen ?? "virtual",
+            x: shot.x,
+            y: shot.y,
+            width: shot.width,
+            height: shot.height,
+            base64Chars: String(shot.data).length
+          })
+        }
+      ]
+    };
   });
 
   server.registerTool("move_mouse", {
@@ -215,7 +236,7 @@ const httpServer = http.createServer((req, res) => {
     res.end(JSON.stringify({
       ok: true,
       service: "comet-chatgpt-bridge",
-      version: "0.7.9",
+      version: "0.7.10",
       mcp: "ready",
       browserConnected: !!browserSocket && browserSocket.readyState === WebSocket.OPEN,
       browserConnectedAt,
@@ -228,7 +249,7 @@ const httpServer = http.createServer((req, res) => {
 
   if (url.pathname === "/" && req.method === "GET") {
     res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({ service: "comet-chatgpt-bridge", version: "0.7.9", status: "ok", mcp: "/mcp" }));
+    res.end(JSON.stringify({ service: "comet-chatgpt-bridge", version: "0.7.10", status: "ok", mcp: "/mcp" }));
     return;
   }
 
@@ -289,7 +310,7 @@ wss.on("connection", (socket, req) => {
 });
 
 httpServer.listen(PORT, "0.0.0.0", () => {
-  console.log(`Comet ChatGPT Bridge v0.7.9 listening on 0.0.0.0:${PORT}`);
+  console.log(`Comet ChatGPT Bridge v0.7.10 listening on 0.0.0.0:${PORT}`);
   console.log("MCP v2 handler ready at /mcp | WSS /browser + /desktop | health /health");
 });
 
