@@ -25,6 +25,7 @@ test('owner OAuth: discovery, manual consent, PKCE, replay, expiry and restart',
   const page=await call('/oauth/authorize?'+new URLSearchParams(args));
   assert.equal(page.status,200);
   assert.equal(page.headers.get('referrer-policy'),'same-origin');
+  assert.ok(page.headers.get('content-security-policy').includes("form-action 'self' "+redirect+';'));
   const cookie=page.headers.get('set-cookie').split(';')[0];
   const request=(await page.text()).match(/name="request" value="([^"]+)"/)[1];
   assert.equal((await call('/oauth/approve',{request,decision:'allow',owner_token:secret},{origin:'null',cookie})).status,400);
