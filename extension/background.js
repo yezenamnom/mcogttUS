@@ -105,11 +105,11 @@ function bootstrapPageHelpers() {
   x=Number(x); y=Number(y);
   if(!Number.isFinite(x)||!Number.isFinite(y)) return false;
   let host=document.getElementById("__cgb_cursor_host");
-  if(host && (host.dataset.cgbCursorVersion!=="6" || !host.isConnected)){ try{host.remove();}catch{} host=null; }
+  if(host && (host.dataset.cgbCursorVersion!=="7" || !host.isConnected)){ try{host.remove();}catch{} host=null; }
   if(!host){
     host=document.createElement("div");
     host.id="__cgb_cursor_host";
-    host.dataset.cgbCursorVersion="6";
+    host.dataset.cgbCursorVersion="7";
     host.dataset.cgbX=String(x); host.dataset.cgbY=String(y);
     host.setAttribute("aria-hidden","true");
     const s=host.style;
@@ -117,34 +117,34 @@ function bootstrapPageHelpers() {
     s.setProperty("display","block","important");
     s.setProperty("position","fixed","important");
     s.setProperty("left","0","important"); s.setProperty("top","0","important");
-    s.setProperty("width","34px","important"); s.setProperty("height","38px","important");
+    s.setProperty("width","30px","important"); s.setProperty("height","30px","important");
     s.setProperty("overflow","visible","important"); s.setProperty("pointer-events","none","important");
     s.setProperty("z-index","2147483647","important"); s.setProperty("will-change","transform","important");
     s.setProperty("transform","translate3d("+x+"px,"+y+"px,0)","important");
     const svg=document.createElementNS("http://www.w3.org/2000/svg","svg");
-    svg.setAttribute("viewBox","0 0 44 48"); svg.setAttribute("width","34"); svg.setAttribute("height","38");
+    svg.setAttribute("viewBox","0 0 48 48"); svg.setAttribute("width","30"); svg.setAttribute("height","30");
     svg.style.setProperty("display","block","important"); svg.style.setProperty("overflow","visible","important");
     const defs=document.createElementNS("http://www.w3.org/2000/svg","defs");
     const grad=document.createElementNS("http://www.w3.org/2000/svg","linearGradient");
-    grad.id="__cgb_cursor_grad_v6"; grad.setAttribute("x1","0"); grad.setAttribute("y1","0"); grad.setAttribute("x2","1"); grad.setAttribute("y2","1");
+    grad.id="__cgb_cursor_grad_v7"; grad.setAttribute("x1","0"); grad.setAttribute("y1","0"); grad.setAttribute("x2","1"); grad.setAttribute("y2","1");
     [["0%","#9bfbff"],["38%","#39e8f5"],["76%","#16bfd6"],["100%","#087e98"]].forEach(function(pair){
       const st=document.createElementNS("http://www.w3.org/2000/svg","stop"); st.setAttribute("offset",pair[0]); st.setAttribute("stop-color",pair[1]); grad.appendChild(st);
     });
     const filter=document.createElementNS("http://www.w3.org/2000/svg","filter");
-    filter.id="__cgb_cursor_shadow_v6"; filter.setAttribute("x","-60%"); filter.setAttribute("y","-60%"); filter.setAttribute("width","220%"); filter.setAttribute("height","220%");
+    filter.id="__cgb_cursor_shadow_v7"; filter.setAttribute("x","-60%"); filter.setAttribute("y","-60%"); filter.setAttribute("width","220%"); filter.setAttribute("height","220%");
     const ds=document.createElementNS("http://www.w3.org/2000/svg","feDropShadow");
     ds.setAttribute("dx","1.8"); ds.setAttribute("dy","2.4"); ds.setAttribute("stdDeviation","2.2"); ds.setAttribute("flood-color","#002b35"); ds.setAttribute("flood-opacity",".48");
     filter.appendChild(ds); defs.appendChild(grad); defs.appendChild(filter); svg.appendChild(defs);
-    const g=document.createElementNS("http://www.w3.org/2000/svg","g"); g.setAttribute("filter","url(#__cgb_cursor_shadow_v6)");
+    const g=document.createElementNS("http://www.w3.org/2000/svg","g"); g.setAttribute("filter","url(#__cgb_cursor_shadow_v7)");
     const ring=document.createElementNS("http://www.w3.org/2000/svg","circle");
-    ring.setAttribute("cx","12"); ring.setAttribute("cy","35"); ring.setAttribute("r","9"); ring.setAttribute("fill","url(#__cgb_cursor_grad_v6)"); ring.setAttribute("stroke","#063542"); ring.setAttribute("stroke-width","2.2"); g.appendChild(ring);
+    ring.setAttribute("cx","11"); ring.setAttribute("cy","11"); ring.setAttribute("r","8.4"); ring.setAttribute("fill","url(#__cgb_cursor_grad_v7)"); ring.setAttribute("stroke","#063542"); ring.setAttribute("stroke-width","2.2"); g.appendChild(ring);
     const hole=document.createElementNS("http://www.w3.org/2000/svg","circle");
-    hole.setAttribute("cx","12"); hole.setAttribute("cy","35"); hole.setAttribute("r","4.6"); hole.setAttribute("fill","#12343c"); g.appendChild(hole);
+    hole.setAttribute("cx","11"); hole.setAttribute("cy","11"); hole.setAttribute("r","4.2"); hole.setAttribute("fill","#12343c"); g.appendChild(hole);
     const shaft=document.createElementNS("http://www.w3.org/2000/svg","path");
-    shaft.setAttribute("d","M18.5 31.5 L25.5 25.2 L31.5 31.1 L41 4 L14.1 14.2 L20.8 20.5 L14.3 27.1 Z");
-    shaft.setAttribute("fill","url(#__cgb_cursor_grad_v6)"); shaft.setAttribute("stroke","#063542"); shaft.setAttribute("stroke-width","2.2"); shaft.setAttribute("stroke-linejoin","round"); g.appendChild(shaft);
+    shaft.setAttribute("d","M15 15 L42 25.2 C44.7 26.3 44.8 30 42.1 31.2 L31 36.1 L24.8 44.1 C23.1 46.3 19.6 45.4 19.2 42.6 Z");
+    shaft.setAttribute("fill","url(#__cgb_cursor_grad_v7)"); shaft.setAttribute("stroke","#063542"); shaft.setAttribute("stroke-width","2.2"); shaft.setAttribute("stroke-linejoin","round"); g.appendChild(shaft);
     const shine=document.createElementNS("http://www.w3.org/2000/svg","path");
-    shine.setAttribute("d","M18.6 15.5 L36.2 8.9 L29.8 27.2"); shine.setAttribute("fill","none"); shine.setAttribute("stroke","rgba(255,255,255,.68)"); shine.setAttribute("stroke-width","1.6"); shine.setAttribute("stroke-linecap","round"); g.appendChild(shine);
+    shine.setAttribute("d","M18.2 17.2 L38.3 25.2 C39.4 25.7 39.7 27.1 38.5 27.8"); shine.setAttribute("fill","none"); shine.setAttribute("stroke","rgba(255,255,255,.68)"); shine.setAttribute("stroke-width","1.6"); shine.setAttribute("stroke-linecap","round"); g.appendChild(shine);
     svg.appendChild(g); host.appendChild(svg); (document.documentElement||document.body).appendChild(host);
   }
   host.style.setProperty("visibility","visible","important"); host.style.setProperty("opacity","1","important");
@@ -255,11 +255,11 @@ async function visualCursor(x,y,click=false) {
   x=Number(x); y=Number(y);
   if(!Number.isFinite(x)||!Number.isFinite(y)) return false;
   let host=document.getElementById("__cgb_cursor_host");
-  if(host && (host.dataset.cgbCursorVersion!=="6" || !host.isConnected)){ try{host.remove();}catch{} host=null; }
+  if(host && (host.dataset.cgbCursorVersion!=="7" || !host.isConnected)){ try{host.remove();}catch{} host=null; }
   if(!host){
     host=document.createElement("div");
     host.id="__cgb_cursor_host";
-    host.dataset.cgbCursorVersion="6";
+    host.dataset.cgbCursorVersion="7";
     host.dataset.cgbX=String(x); host.dataset.cgbY=String(y);
     host.setAttribute("aria-hidden","true");
     const s=host.style;
@@ -267,34 +267,34 @@ async function visualCursor(x,y,click=false) {
     s.setProperty("display","block","important");
     s.setProperty("position","fixed","important");
     s.setProperty("left","0","important"); s.setProperty("top","0","important");
-    s.setProperty("width","34px","important"); s.setProperty("height","38px","important");
+    s.setProperty("width","30px","important"); s.setProperty("height","30px","important");
     s.setProperty("overflow","visible","important"); s.setProperty("pointer-events","none","important");
     s.setProperty("z-index","2147483647","important"); s.setProperty("will-change","transform","important");
     s.setProperty("transform","translate3d("+x+"px,"+y+"px,0)","important");
     const svg=document.createElementNS("http://www.w3.org/2000/svg","svg");
-    svg.setAttribute("viewBox","0 0 44 48"); svg.setAttribute("width","34"); svg.setAttribute("height","38");
+    svg.setAttribute("viewBox","0 0 48 48"); svg.setAttribute("width","30"); svg.setAttribute("height","30");
     svg.style.setProperty("display","block","important"); svg.style.setProperty("overflow","visible","important");
     const defs=document.createElementNS("http://www.w3.org/2000/svg","defs");
     const grad=document.createElementNS("http://www.w3.org/2000/svg","linearGradient");
-    grad.id="__cgb_cursor_grad_v6"; grad.setAttribute("x1","0"); grad.setAttribute("y1","0"); grad.setAttribute("x2","1"); grad.setAttribute("y2","1");
+    grad.id="__cgb_cursor_grad_v7"; grad.setAttribute("x1","0"); grad.setAttribute("y1","0"); grad.setAttribute("x2","1"); grad.setAttribute("y2","1");
     [["0%","#9bfbff"],["38%","#39e8f5"],["76%","#16bfd6"],["100%","#087e98"]].forEach(function(pair){
       const st=document.createElementNS("http://www.w3.org/2000/svg","stop"); st.setAttribute("offset",pair[0]); st.setAttribute("stop-color",pair[1]); grad.appendChild(st);
     });
     const filter=document.createElementNS("http://www.w3.org/2000/svg","filter");
-    filter.id="__cgb_cursor_shadow_v6"; filter.setAttribute("x","-60%"); filter.setAttribute("y","-60%"); filter.setAttribute("width","220%"); filter.setAttribute("height","220%");
+    filter.id="__cgb_cursor_shadow_v7"; filter.setAttribute("x","-60%"); filter.setAttribute("y","-60%"); filter.setAttribute("width","220%"); filter.setAttribute("height","220%");
     const ds=document.createElementNS("http://www.w3.org/2000/svg","feDropShadow");
     ds.setAttribute("dx","1.8"); ds.setAttribute("dy","2.4"); ds.setAttribute("stdDeviation","2.2"); ds.setAttribute("flood-color","#002b35"); ds.setAttribute("flood-opacity",".48");
     filter.appendChild(ds); defs.appendChild(grad); defs.appendChild(filter); svg.appendChild(defs);
-    const g=document.createElementNS("http://www.w3.org/2000/svg","g"); g.setAttribute("filter","url(#__cgb_cursor_shadow_v6)");
+    const g=document.createElementNS("http://www.w3.org/2000/svg","g"); g.setAttribute("filter","url(#__cgb_cursor_shadow_v7)");
     const ring=document.createElementNS("http://www.w3.org/2000/svg","circle");
-    ring.setAttribute("cx","12"); ring.setAttribute("cy","35"); ring.setAttribute("r","9"); ring.setAttribute("fill","url(#__cgb_cursor_grad_v6)"); ring.setAttribute("stroke","#063542"); ring.setAttribute("stroke-width","2.2"); g.appendChild(ring);
+    ring.setAttribute("cx","11"); ring.setAttribute("cy","11"); ring.setAttribute("r","8.4"); ring.setAttribute("fill","url(#__cgb_cursor_grad_v7)"); ring.setAttribute("stroke","#063542"); ring.setAttribute("stroke-width","2.2"); g.appendChild(ring);
     const hole=document.createElementNS("http://www.w3.org/2000/svg","circle");
-    hole.setAttribute("cx","12"); hole.setAttribute("cy","35"); hole.setAttribute("r","4.6"); hole.setAttribute("fill","#12343c"); g.appendChild(hole);
+    hole.setAttribute("cx","11"); hole.setAttribute("cy","11"); hole.setAttribute("r","4.2"); hole.setAttribute("fill","#12343c"); g.appendChild(hole);
     const shaft=document.createElementNS("http://www.w3.org/2000/svg","path");
-    shaft.setAttribute("d","M18.5 31.5 L25.5 25.2 L31.5 31.1 L41 4 L14.1 14.2 L20.8 20.5 L14.3 27.1 Z");
-    shaft.setAttribute("fill","url(#__cgb_cursor_grad_v6)"); shaft.setAttribute("stroke","#063542"); shaft.setAttribute("stroke-width","2.2"); shaft.setAttribute("stroke-linejoin","round"); g.appendChild(shaft);
+    shaft.setAttribute("d","M15 15 L42 25.2 C44.7 26.3 44.8 30 42.1 31.2 L31 36.1 L24.8 44.1 C23.1 46.3 19.6 45.4 19.2 42.6 Z");
+    shaft.setAttribute("fill","url(#__cgb_cursor_grad_v7)"); shaft.setAttribute("stroke","#063542"); shaft.setAttribute("stroke-width","2.2"); shaft.setAttribute("stroke-linejoin","round"); g.appendChild(shaft);
     const shine=document.createElementNS("http://www.w3.org/2000/svg","path");
-    shine.setAttribute("d","M18.6 15.5 L36.2 8.9 L29.8 27.2"); shine.setAttribute("fill","none"); shine.setAttribute("stroke","rgba(255,255,255,.68)"); shine.setAttribute("stroke-width","1.6"); shine.setAttribute("stroke-linecap","round"); g.appendChild(shine);
+    shine.setAttribute("d","M18.2 17.2 L38.3 25.2 C39.4 25.7 39.7 27.1 38.5 27.8"); shine.setAttribute("fill","none"); shine.setAttribute("stroke","rgba(255,255,255,.68)"); shine.setAttribute("stroke-width","1.6"); shine.setAttribute("stroke-linecap","round"); g.appendChild(shine);
     svg.appendChild(g); host.appendChild(svg); (document.documentElement||document.body).appendChild(host);
   }
   host.style.setProperty("visibility","visible","important"); host.style.setProperty("opacity","1","important");
