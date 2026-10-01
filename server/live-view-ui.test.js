@@ -11,7 +11,8 @@ function harness(initial=null, toolResult=null) {
   const elements=Object.fromEntries(['screen','frame','message','status','monitor','toggle'].map(id=>[id,node()]));
   class FakeWebSocket { static OPEN=1; constructor(url){this.url=url;this.readyState=1;this.sent=[];sockets.push(this)} send(value){this.sent.push(JSON.parse(value))} close(){this.readyState=3} }
   const window={parent:{postMessage(){}},addEventListener(){},openai:{async callTool(name,args){calls.push({name,args});return {structuredContent:toolResult};}}};
-  const context={window,WebSocket:FakeWebSocket,Blob:class{},URL:{createObjectURL:()=> 'blob:frame',revokeObjectURL(){}},document:{hidden:false,getElementById:id=>elements[id],createElement:node},performance:{now:()=>10},setTimeout(fn){const id=++timerId;timers.set(id,fn);return id},clearTimeout(id){timers.delete(id)},Map,Promise,Error,String,Number,Math,JSON};
+  class FakeFileReader { readAsDataURL(){this.result='data:image/webp;base64,QUJD';this.onload?.()} }
+  const context={window,WebSocket:FakeWebSocket,Blob:class{},FileReader:FakeFileReader,document:{hidden:false,getElementById:id=>elements[id],createElement:node},performance:{now:()=>10},setTimeout(fn){const id=++timerId;timers.set(id,fn);return id},clearTimeout(id){timers.delete(id)},Map,Promise,Error,String,Number,Math,JSON};
   vm.runInNewContext(script,context);
   return {calls,sockets,timers,elements};
 }
@@ -33,7 +34,7 @@ test('viewer times out a stalled ChatGPT state call and schedules retry',async()
   const timers=new Map();let timerId=0;const node=()=>({textContent:'',classList:{add(){},remove(){}},replaceChildren(){},addEventListener(){}});
   const elements=Object.fromEntries(['screen','frame','message','status','monitor','toggle'].map(id=>[id,node()]));
   const window={parent:{postMessage(){}},addEventListener(){},openai:{callTool(){return new Promise(()=>{});}}};
-  vm.runInNewContext(script,{window,WebSocket:class{},Blob:class{},URL:{},document:{hidden:false,getElementById:id=>elements[id],createElement:node},performance:{now:()=>5},setTimeout(fn){const id=++timerId;timers.set(id,fn);return id},clearTimeout(id){timers.delete(id)},Map,Promise,Error,String,Number,Math,JSON});
+  vm.runInNewContext(script,{window,WebSocket:class{},Blob:class{},FileReader:class{},document:{hidden:false,getElementById:id=>elements[id],createElement:node},performance:{now:()=>5},setTimeout(fn){const id=++timerId;timers.set(id,fn);return id},clearTimeout(id){timers.delete(id)},Map,Promise,Error,String,Number,Math,JSON});
   const timeout=timers.entries().next().value;timeout[1]();
   for(let i=0;i<12;i++)await Promise.resolve();
   assert.match(elements.status.textContent,/تعذر جلب بيانات الاتصال/);
