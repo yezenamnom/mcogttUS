@@ -48,9 +48,18 @@
       const status = document.getElementById('status');
       const select = document.getElementById('monitor');
       const toggle = document.getElementById('toggle');
+      function withTimeout(promise, milliseconds) {
+        return new Promise((resolve, reject) => {
+          const timeout = setTimeout(() => reject(new Error('انتهت مهلة استجابة ChatGPT للوحة')), milliseconds);
+          Promise.resolve(promise).then(
+            value => { clearTimeout(timeout); resolve(value); },
+            error => { clearTimeout(timeout); reject(error); }
+          );
+        });
+      }
       function rpc(method, params) {
         if (method === 'tools/call' && typeof window.openai?.callTool === 'function') {
-          return window.openai.callTool(params.name, params.arguments);
+          return withTimeout(window.openai.callTool(params.name, params.arguments), params.name === 'live_view_frame' ? 20000 : 8000);
         }
         const id = requestId++;
         return new Promise((resolve, reject) => {
@@ -71,7 +80,12 @@
         }
         if (value.method === 'ui/notifications/tool-result') configure(value.params?.structuredContent);
       });
+      window.addEventListener('openai:set_globals', event => configure(event.detail?.globals?.toolOutput));
+      function unwrap(result) {
+        return result?.structuredContent || result?.call_tool_result?.structuredContent || result?.mcp_tool_result?.structuredContent || result;
+      }
       function configure(result) {
+        result = unwrap(result);
         if (!result || typeof result.connected !== 'boolean') return;
         latest = result;
         if (!result.connected) { status.textContent = 'البرنامج غير متصل — إعادة المحاولة'; message.textContent = 'شغّل برنامج GPT US على الكمبيوتر؛ ستعيد اللوحة الاتصال تلقائيًا.'; schedule(3000); return; }
@@ -93,7 +107,7 @@
       async function refreshConnection() {
         try {
           const result = await rpc('tools/call', { name: 'live_view_state', arguments: {} });
-          configure(result?.structuredContent || result);
+          configure(result);
           if (!latest?.connected) schedule(3000);
         } catch (error) {
           status.textContent = 'تعذر جلب بيانات الاتصال';
@@ -108,7 +122,7 @@
         const started = performance.now();
         try {
           const result = await rpc('tools/call', { name: 'live_view_frame', arguments: { screen: monitor } });
-          const data = result?.structuredContent?.frame || result?._meta?.frame;
+          const data = unwrap(result)?.frame || result?._meta?.frame;
           if (!data?.dataUrl || data.screen !== monitor) throw new Error('لم تصل الصورة إلى اللوحة');
           frame.src = data.dataUrl;
           screen.classList.add('ready');
@@ -137,9 +151,10 @@
         if (active) schedule(0); else clearTimeout(timer);
       });
       window.addEventListener('pagehide', () => { active = false; clearTimeout(timer); });
-      configure(window.openai?.toolOutput);
+      configure(window.openai?.toolOutput || window.openai?.toolResponseMetadata);
       if (!latest?.connected) refreshConnection();
     })();
   </script>
 </body>
 </html>
+
