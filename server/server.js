@@ -77,12 +77,11 @@ function makeMcpServer() {
   }, async () => {
     const shot = await callDesktop("desktop_screenshot", { screen: 1 }, 30000);
     if (!shot?.data) throw new Error("Desktop agent did not return PNG image data");
-    const input = Buffer.from(shot.data, "base64");
-    const jpeg = await sharp(input).resize({ width: 1600, withoutEnlargement: true }).jpeg({ quality: 72, mozjpeg: true }).toBuffer();
-    return { content: [
-      { type: "image", data: jpeg.toString("base64"), mimeType: "image/jpeg" },
-      { type: "text", text: JSON.stringify({ source:"desktop", screen:1, x:shot.x, y:shot.y, width:shot.width, height:shot.height, deliveredWidth:1600, format:"jpeg", quality:72 }) }
-    ] };
+    const png = String(shot.data).replace(/^data:image\\/png;base64,/, "");
+    return {
+      content: [{ type: "image", data: png, mimeType: "image/png" }],
+      structuredContent: { source: "desktop", screen: 1, width: shot.width, height: shot.height }
+    };
   });
 
   server.registerTool("move_mouse", {
