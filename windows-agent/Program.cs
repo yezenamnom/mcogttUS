@@ -73,7 +73,7 @@ internal static partial class Program
    double next=0;
    while(sw.Elapsed.TotalMilliseconds<ms){
     double now=sw.Elapsed.TotalMilliseconds;
-    if(now<next){await Task.Delay(1);continue;}
+    if(now<next){await Task.Delay(1).ConfigureAwait(false);continue;}
     double t=Math.Clamp(now/ms,0,1),e=t*t*(3-2*t);
     MoveNative((int)Math.Round(s.X+(x-s.X)*e),(int)Math.Round(s.Y+(y-s.Y)*e));updates++;
     next=(Math.Floor(sw.Elapsed.TotalMilliseconds/interval)+1)*interval;

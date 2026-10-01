@@ -39,8 +39,17 @@ No screenshot is required between moving and clicking; capture after a meaningfu
 action when its UI result needs verification. screenshotAfter on desktop_mouse_action
 returns an image directly to MCP and does not upload it to a screenshot sharing host.
 
-Remaining acceptance work: Explorer ZIP extraction, file copy/paste by GUI, actual
-display refresh-rate measurement. 240 is the input scheduling target; total command
+Final Explorer acceptance: downloaded the published ZIP using physical mouse input,
+opened its compressed folder in Explorer, selected Copy in the context menu, and
+clicked Paste on Desktop. The extracted mcogttUS-main directory appeared and its
+windows-agent/MouseActions.cs file was confirmed present. No direct extraction API
+was used for this acceptance test. A preceding click was safely rejected by the
+cursor-position check; a fresh observed retry succeeded. Its root cause remains
+unconfirmed, so broad interference/precision testing is still outstanding.
+
+Remaining acceptance work: automatic CSS-to-physical coordinate mapping, prolonged
+interference/precision tests, and actual display refresh-rate measurement.
+240 is the input scheduling target; total command
 time includes click, verification and network latency. DOM/CDP coordinates must not
 be used as physical screen coordinates without an explicit mapping.
 Running test build: windows-agent/bin/integrated-090/ChatGPTDesktopBridge.exe.

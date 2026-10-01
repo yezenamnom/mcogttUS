@@ -5,6 +5,8 @@ internal static partial class Program
 {
  static async Task<object> MouseAction(JsonElement a)
  {
+  if(S(a,"kind")=="report")return WorkspaceReport();
+  if(S(a,"kind")=="save_report")return SaveBrowserReport(a);
   var kind=S(a,"kind","click");
   if(kind is not ("move" or "click" or "double" or "right" or "drag" or "scroll"))
    throw new ArgumentException("Unknown mouse action");

@@ -1,6 +1,7 @@
 import http from "node:http";
 import crypto from "node:crypto";
 import sharp from "sharp";
+import { locateViewport } from "./viewport-match.js";
 import SftpClient from "ssh2-sftp-client";
 import { WebSocketServer, WebSocket } from "ws";
 import { McpServer, createMcpHandler } from "@modelcontextprotocol/server";
@@ -345,6 +346,23 @@ function makeMcpServer() {
   }[command] || command);
   const desktopText = async (command,args={},timeout=30000) => ({ content:[{type:"text",text:JSON.stringify(await callDesktop(desktopAlias(command),args,timeout),null,2)}] });
   server.registerTool("desktop_info",{description:"Report Windows desktop-agent connection and machine info.",inputSchema:z.object({})},async()=>desktopText("desktop_info"));
+  server.registerTool("sync_browser_mouse",{description:"Map CSS viewport coordinates to real Windows cursor using visual calibration. Requires visible active tab and screen/mouse permission. Fails closed on ambiguous capture. No screenshot between move and click.",inputSchema:z.object({tabId:z.number().int(),kind:z.enum(["move","click","right","double"]),x:z.number().nonnegative(),y:z.number().nonnegative(),durationMs:z.number().int().min(0).max(10000).optional()})},async args=>{
+    const page=await callBrowser("screenshot",{tabId:args.tabId});
+    if(args.x>=page.width||args.y>=page.height)throw new Error("Target outside viewport");
+    const screen=await callDesktop("desktop_screenshot",{});
+    const decode=async b=>{const {data,info}=await sharp(b).removeAlpha().raw().toBuffer({resolveWithObject:true});return {data,width:info.width,height:info.height};};
+    const [d,p]=await Promise.all([decode(Buffer.from(screen.data,"base64")),decode(Buffer.from(page.dataUrl.split(",")[1],"base64"))]);
+    const match=locateViewport(d,p),sx=p.width/page.width,sy=p.height/page.height;
+    const physical={...args,x:Math.round(screen.x+match.x+args.x*sx),y:Math.round(screen.y+match.y+args.y*sy)};
+    const result=await callDesktop("desktop_mouse_action",physical);
+    return {content:[{type:"text",text:JSON.stringify({result,calibration:{...match,scaleX:sx,scaleY:sy},calibratedEveryAction:true})}]};
+  });
+  server.registerTool("desktop_workspace_report",{description:"Save timestamped desktop file/window/monitor metadata locally; requires read and write permissions. Not a live pixel/element map.",inputSchema:z.object({})},async()=>desktopText("desktop_mouse_action",{kind:"report"}));
+  server.registerTool("browser_workspace_report",{description:"Observe page and elements and save JSON locally through Windows agent. Coordinates become stale after layout/navigation changes.",inputSchema:z.object({tabId:z.number().int().optional()})},async args=>{
+    const report=await callBrowser("workspace_report",args);
+    const saved=await callDesktop("desktop_mouse_action",{kind:"save_report",report});
+    return {content:[{type:"text",text:JSON.stringify({saved,report},null,2)}]};
+  });
   server.registerTool("desktop_screen_size",{description:"Get the Windows virtual desktop dimensions.",inputSchema:z.object({})},async()=>desktopText("desktop_screen_size"));
   server.registerTool("desktop_monitors",{description:"List Windows monitors with index, primary flag and coordinates.",inputSchema:z.object({})},async()=>desktopText("desktop_monitors"));
   server.registerTool("desktop_clipboard_get",{description:"Read text from the Windows clipboard when clipboard permission is enabled.",inputSchema:z.object({})},async()=>desktopText("desktop_clipboard_get"));

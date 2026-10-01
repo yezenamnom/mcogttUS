@@ -1,0 +1,26 @@
+const {test}=require('node:test');
+const assert=require('node:assert/strict');
+const vm=require('node:vm');
+const fs=require('node:fs');
+test('page helpers are reused inside one document',()=>{
+ const source=fs.readFileSync(__dirname+'/background.js','utf8');
+ const context={};vm.createContext(context);
+ vm.runInContext(source.slice(source.indexOf('function bootstrapPageHelpers()'),source.indexOf('async function runInTab'))+';bootstrapPageHelpers();',context);
+ const first=context.elementMap;
+ vm.runInContext('bootstrapPageHelpers()',context);
+ assert.equal(context.elementMap,first);
+ assert.equal(context.__gptusHelpersVersion,'0.9.1');
+});
+test('wave is click-through, idle-hidden, reused and times out',()=>{
+ let host,timer,created=0;
+ const context={document:{getElementById:()=>host,createElement:()=>{created++;return {style:{},setAttribute(){},attachShadow(){return this;}};},documentElement:{append:e=>{host=e;}}},clearTimeout(){},setTimeout:fn=>{timer=fn;return 1;}};
+ vm.createContext(context);
+ const source=fs.readFileSync(__dirname+'/activity-wave.js','utf8');
+ vm.runInContext(source,context);
+ assert.equal(host.hidden,true);
+ assert.match(host.style.cssText,/pointer-events:none/);
+ assert.match(host.innerHTML,/prefers-reduced-motion/);
+ context.__gptusShowWave();assert.equal(host.hidden,false);
+ timer();assert.equal(host.hidden,true);
+ vm.runInContext(source,context);assert.equal(created,1);
+});

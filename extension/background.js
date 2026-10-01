@@ -1,7 +1,7 @@
 let ws = null;
 let reconnectTimer = null;
 let pingTimer = null;
-const EXT_VERSION = "0.9.0";
+const EXT_VERSION = "0.9.1";
 const domState = new Map();
 const cdpAttached = new Set();
 const networkState = new Map();
@@ -153,6 +153,9 @@ chrome.debugger.onEvent.addListener((source,method,params)=>{
   }
 });
 function bootstrapPageHelpers() {
+  globalThis.__gptusShowWave?.();
+  // Isolated-world state is reset by document navigation; reuse helpers within it.
+  if(globalThis.__gptusHelpersVersion==="0.9.1")return;
   // Functions passed to chrome.scripting.executeScript do not retain the
   // background service worker's lexical scope. Publish the shared helpers
   // into the tab's isolated world before executing commands that reference them.
@@ -254,6 +257,7 @@ function bootstrapPageHelpers() {
       return {elementId:el.dataset.cgbId,tag:el.tagName.toLowerCase(),text:clean(el.innerText||el.getAttribute("aria-label")||el.placeholder||"").slice(0,180),visible:r.width>0&&r.height>0&&r.bottom>=0&&r.right>=0&&r.top<=innerHeight&&r.left<=innerWidth,disabled:!!el.disabled,rect:{x:r.x,y:r.y,width:r.width,height:r.height}};
     });
   };
+  globalThis.__gptusHelpersVersion="0.9.1";
 }
 async function runInTab(tabId, func, args = []) {
   await chrome.scripting.executeScript({ target: { tabId }, func: bootstrapPageHelpers });
@@ -601,6 +605,13 @@ function selectTarget(selector,value) { const el=document.querySelector(selector
 async function executeCommand(command,args={}){
   const tab=async()=>await targetTab(args);
   switch(command){
+    case "workspace_report": {
+      const t=await tab();
+      const report={schemaVersion:1,observedAt:new Date().toISOString(),coordinateSpace:"css-viewport",tabId:t.id,
+        page:await runInTab(t.id,pageSnapshot,[10000]),elements:await runInTab(t.id,elementMap,[]),staleAfterNavigation:true};
+      await chrome.storage.local.set({workspaceReport:report});
+      return report;
+    }
     case "bridge_info": { const t=await activeTab().catch(()=>null); return {extensionVersion:EXT_VERSION,connected:ws?.readyState===WebSocket.OPEN,activeTabId:t?.id||null,cdpAttached:[...cdpAttached],capabilities:["tabId","live_dom","dom_diff","deep_dom","shadow_dom","same_origin_iframes","element_map","viewport","wait_for","mouse_advanced","smooth_cursor","freehand_draw","native_mouse_path","keyboard_combo","drag_drop","zoom","parallel_actions","cdp","screenshots","forms","click_fallback"]}; }
     case "get_page": { const t=await tab(); const result=await runInTab(t.id,pageSnapshot,[Math.min(Math.max(Number(args.maxChars||30000),1000),100000)]); return {tabId:t.id,...result}; }
     case "get_viewport": { const t=await tab(); return {tabId:t.id,...await runInTab(t.id,viewportInfo,[])}; }
