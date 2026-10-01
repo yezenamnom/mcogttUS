@@ -112,7 +112,7 @@ function callBrowser(command, args = {}, timeoutMs = 20000) {
       pending.delete(id);
       reject(new Error(`Timed out waiting for browser command: ${command}`));
     }, timeoutMs);
-    pending.set(id, { resolve, reject, timer });
+    pending.set(id, { resolve, reject, timer, socket:browserSocket });
     browserSocket.send(JSON.stringify({ type: "command", id, command, args }));
   });
 }
@@ -127,7 +127,7 @@ function callDesktop(command, args = {}, timeoutMs = 30000) {
       desktopPending.delete(id);
       reject(new Error(`Timed out waiting for desktop command: ${command}`));
     }, timeoutMs);
-    desktopPending.set(id, { resolve, reject, timer });
+    desktopPending.set(id, { resolve, reject, timer, socket:desktopSocket });
     desktopSocket.send(JSON.stringify({ type: "command", id, command, args }));
   });
 }
@@ -356,6 +356,30 @@ function makeMcpServer() {
     const shot=await callDesktop("desktop_screenshot",{},30000);
     return {content:[{type:"image",data:shot.data,mimeType:shot.mimeType||"image/png"},{type:"text",text:JSON.stringify({x:shot.x,y:shot.y,width:shot.width,height:shot.height})}]};
   });
+  server.registerTool("desktop_mouse_action",{
+    description:"One real Windows mouse operation: verified move then click/right/double/scroll, or drag. Coordinates are physical screen pixels including negative monitor origins. Uses one desktop round-trip. Optionally returns one screenshot AFTER the completed action. Do not capture between movement and click.",
+    inputSchema:z.object({kind:z.enum(["move","click","right","double","drag","scroll"]),x:z.number().int(),y:z.number().int(),toX:z.number().int().optional(),toY:z.number().int().optional(),durationMs:z.number().int().min(0).max(10000).optional(),button:z.enum(["left","middle","right"]).optional(),delta:z.number().int().min(-12000).max(12000).optional(),horizontal:z.boolean().optional(),screenshotAfter:z.boolean().optional(),settleMs:z.number().int().min(0).max(2000).optional()})
+  },async args=>{
+    const result=await callDesktop("desktop_mouse_action",args,30000);
+    const content=[{type:"text",text:JSON.stringify(result)}];
+    if(args.screenshotAfter){
+      await new Promise(resolve=>setTimeout(resolve,args.settleMs??120));
+      const shot=await callDesktop("desktop_screenshot",{},30000);
+      const data=await sharp(Buffer.from(shot.data,"base64")).resize({width:2048,withoutEnlargement:true}).webp({quality:65}).toBuffer();
+      content.push({type:"text",text:JSON.stringify({x:shot.x,y:shot.y,sourceWidth:shot.width,sourceHeight:shot.height,coordinateSpace:"physical-screen"})});
+      content.push({type:"image",data:data.toString("base64"),mimeType:"image/webp"});
+    }
+    return {content};
+  });
+  server.registerTool("control_mouse",{
+    description:"Unified Windows/browser mouse. Desktop backend moves the real visible Windows pointer in physical screen pixels including negative origins, including inside browser windows and Explorer. Browser backend uses CSS viewport coordinates through CDP; it does not move the Windows cursor. Move then click is one operation.",
+    inputSchema:z.object({backend:z.enum(["desktop","browser"]).default("desktop"),kind:z.enum(["move","click","right","double","drag","scroll"]),tabId:z.number().int().optional(),x:z.number(),y:z.number(),toX:z.number().optional(),toY:z.number().optional(),button:z.enum(["left","middle","right"]).optional(),durationMs:z.number().int().min(0).max(10000).optional(),delta:z.number().int().min(-12000).max(12000).optional(),horizontal:z.boolean().optional()})
+  },async args=>{
+    if(args.backend==="desktop")return desktopText("desktop_mouse_action",args);
+    if(args.kind==="drag")return textResult("drag_drop",{...args,fromX:args.x,fromY:args.y},30000);
+    if(args.kind==="scroll")return textResult("scroll",{tabId:args.tabId,x:args.horizontal?(args.delta??120):0,y:args.horizontal?0:(args.delta??120)});
+    return textResult("mouse_action",{...args,kind:args.kind==="move"?"mousemove":args.kind});
+  });
   server.registerTool("desktop_cursor_position",{description:"Read current Windows cursor coordinates.",inputSchema:z.object({})},async args=>desktopText("desktop_cursor_position",args));
   server.registerTool("desktop_move_mouse",{description:"Smoothly move the real Windows mouse pointer.",inputSchema:z.object({x:z.number(),y:z.number(),durationMs:z.number().int().min(0).max(10000).optional()})},async args=>desktopText("desktop_move_mouse",args));
   server.registerTool("desktop_mouse_move",{description:"Alias for desktop_move_mouse. Smoothly move the real Windows mouse pointer.",inputSchema:z.object({x:z.number(),y:z.number(),durationMs:z.number().int().min(0).max(10000).optional()})},async args=>desktopText("desktop_mouse_move",args));
@@ -371,7 +395,7 @@ function makeMcpServer() {
   server.registerTool("desktop_extract_zip",{description:"Extract a ZIP archive on Windows directly to a destination folder.",inputSchema:z.object({source:z.string(),destination:z.string(),overwrite:z.boolean().optional()})},async args=>desktopText("desktop_extract_zip",args,60000));
   server.registerTool("desktop_copy_directory",{description:"Recursively copy a Windows directory.",inputSchema:z.object({source:z.string(),destination:z.string(),overwrite:z.boolean().optional()})},async args=>desktopText("desktop_copy_directory",args,60000));
   server.registerTool("desktop_open_path",{description:"Open a Windows file, folder, or ZIP path with its default application.",inputSchema:z.object({path:z.string()})},async args=>desktopText("desktop_open_path",args));
-  server.registerTool("desktop_scroll",{description:"Scroll with the real Windows mouse wheel.",inputSchema:z.object({delta:z.number().int().min(-12000).max(12000).optional()})},async args=>desktopText("desktop_scroll",args));
+  server.registerTool("desktop_scroll",{description:"Scroll with the real Windows mouse wheel, vertically or horizontally.",inputSchema:z.object({delta:z.number().int().min(-12000).max(12000).optional(),horizontal:z.boolean().optional()})},async args=>desktopText("desktop_scroll",args));
   server.registerTool("desktop_window_activate",{description:"Bring a top-level Windows application window to the foreground by PID.",inputSchema:z.object({pid:z.number().int()})},async args=>desktopText("desktop_window_activate",args));
   server.registerTool("desktop_window_minimize",{description:"Minimize a top-level Windows application window by PID.",inputSchema:z.object({pid:z.number().int()})},async args=>desktopText("desktop_window_minimize",args));
   server.registerTool("desktop_window_maximize",{description:"Maximize a top-level Windows application window by PID.",inputSchema:z.object({pid:z.number().int()})},async args=>desktopText("desktop_window_maximize",args));
@@ -462,9 +486,16 @@ wss.on("connection", (socket, req) => {
     }
   });
   socket.on("close", () => {
+    const map=isDesktop?desktopPending:pending;
+    for(const [id,item] of map){
+      if(item.socket!==socket)continue;
+      clearTimeout(item.timer);map.delete(id);
+      item.reject(new Error("Bridge disconnected during command; execution outcome unknown. Observe state before retrying."));
+    }
     if (isDesktop && desktopSocket === socket) { desktopSocket = null; desktopConnectedAt = null; }
     if (!isDesktop && browserSocket === socket) { browserSocket = null; browserConnectedAt = null; }
   });
+  socket.on("error",()=>socket.close());
 });
 
 httpServer.listen(PORT, "0.0.0.0", () => {

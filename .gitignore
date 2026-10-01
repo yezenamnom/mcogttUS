@@ -1,2 +1,6 @@
 server/node_modules/
 *.log
+windows-agent/bin/
+windows-agent/obj/
+windows-agent/settings.json
+.runtime-backup/

@@ -3,6 +3,7 @@
   "bridgeToken": "PUT_YOUR_TOKEN_HERE",
   "localServerEnabled": true,
   "localPort": 8765,
+  "mouseUpdateHz": 240,
   "permissions": {
     "screen": true,
     "mouse": true,

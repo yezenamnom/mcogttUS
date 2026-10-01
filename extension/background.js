@@ -1,10 +1,12 @@
 let ws = null;
 let reconnectTimer = null;
 let pingTimer = null;
-const EXT_VERSION = "0.8.1";
+const EXT_VERSION = "0.9.0";
 const domState = new Map();
 const cdpAttached = new Set();
 const networkState = new Map();
+let commandQueue = Promise.resolve();
+let reconnectAttempt = 0;
 
 function getNetworkState(tabId){
   if(!networkState.has(tabId)) networkState.set(tabId,{order:[],byId:new Map()});
@@ -37,6 +39,7 @@ async function connect() {
   ws = new WebSocket(`${wsBase}/browser?token=${encodeURIComponent(bridgeToken)}`);
 
   ws.onopen = () => {
+    reconnectAttempt = 0;
     chrome.action.setBadgeText({ text: "ON" });
     chrome.action.setBadgeBackgroundColor({ color: "#2e7d32" });
     clearInterval(pingTimer);
@@ -45,19 +48,21 @@ async function connect() {
     }, 20000);
   };
 
-  ws.onmessage = async event => {
+  const connection = ws;
+  ws.onmessage = event => {
     let msg;
     try { msg = JSON.parse(event.data); } catch { return; }
     if (msg.type !== "command" || !msg.id) return;
-    try {
-      const result = await executeCommand(msg.command, msg.args || {});
-      ws.send(JSON.stringify({ type: "result", id: msg.id, ok: true, result }));
-    } catch (error) {
-      ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: String(error?.message || error) }));
-    }
+    commandQueue = commandQueue.catch(()=>{}).then(async()=>{
+      if(connection.readyState!==WebSocket.OPEN)return;
+      let reply;
+      try { reply={type:"result",id:msg.id,ok:true,result:await executeCommand(msg.command,msg.args||{})}; }
+      catch(error){reply={type:"result",id:msg.id,ok:false,error:String(error?.message||error)};}
+      if(connection.readyState===WebSocket.OPEN)connection.send(JSON.stringify(reply));
+    });
   };
-  ws.onclose = () => { ws = null; scheduleReconnect(); };
-  ws.onerror = () => { try { ws.close(); } catch {} };
+  ws.onclose = () => { if(ws===connection){ws = null; scheduleReconnect();} };
+  ws.onerror = () => { try { connection.close(); } catch {} };
 }
 
 function scheduleReconnect() {
@@ -65,7 +70,7 @@ function scheduleReconnect() {
   chrome.action.setBadgeBackgroundColor({ color: "#9e9e9e" });
   clearInterval(pingTimer);
   clearTimeout(reconnectTimer);
-  reconnectTimer = setTimeout(connect, 3000);
+  reconnectTimer = setTimeout(()=>connect().catch(scheduleReconnect), Math.min(10000,1000*2**reconnectAttempt++)+Math.floor(Math.random()*250));
 }
 
 async function activeTab() {
@@ -502,17 +507,44 @@ async function mouseAction(kind,x,y,button="left"){
   return {ok:true,kind:kind,tag:el.tagName.toLowerCase(),x:x,y:y};
 }
 
+const nativeButtons = new Map();
+async function nativeMouseAction(tabId,args) {
+  const x=Number(args.x), y=Number(args.y), kind=args.kind;
+  if(!Number.isFinite(x)||!Number.isFinite(y)||x<0||y<0) throw new Error("Invalid viewport coordinates");
+  if(!["click","double","right","mousedown","mouseup","mousemove","mouseover"].includes(kind)) throw new Error("Invalid mouse action");
+  await ensureCdp(tabId);
+  const button=kind==="right"?"right":args.button||"left";
+  if(!["left","right","middle"].includes(button)) throw new Error("Invalid button");
+  const mask=button==="right"?2:button==="middle"?4:1;
+  const send=(type,b,buttons,count=0)=>chrome.debugger.sendCommand({tabId},"Input.dispatchMouseEvent",{type,x,y,button:b,buttons,clickCount:count});
+  let held=nativeButtons.get(tabId)||0;
+  await send("mouseMoved","none",held);
+  if(kind==="mousedown"){await send("mousePressed",button,held|mask,1);nativeButtons.set(tabId,held|mask);}
+  else if(kind==="mouseup"){await send("mouseReleased",button,held&~mask,1);nativeButtons.set(tabId,held&~mask);}
+  else if(kind==="click"||kind==="double"||kind==="right"){
+    for(let count=1;count<=(kind==="double"?2:1);count++){
+      try{await send("mousePressed",button,held|mask,count);}
+      finally{await send("mouseReleased",button,held,count);}
+    }
+  }
+  return {dispatched:true,input:"CDP",kind,x,y,buttons:nativeButtons.get(tabId)||held,uiVerified:false,physicalCursor:false};
+}
+
 async function nativeMousePath(tabId, points, options={}) {
-  const pts=(Array.isArray(points)?points:[]).slice(0,3000).map(p=>({x:Number(p.x),y:Number(p.y)})).filter(p=>Number.isFinite(p.x)&&Number.isFinite(p.y));
-  if(pts.length<2) throw new Error("native_mouse_path needs at least two valid points");
+  if(!Array.isArray(points)||points.length<2||points.length>3000)throw new Error("native_mouse_path requires 2–3000 points");
+  const pts=points.map(p=>({x:Number(p.x),y:Number(p.y)}));
+  if(pts.some(p=>!Number.isFinite(p.x)||!Number.isFinite(p.y)||p.x<0||p.y<0))throw new Error("Invalid path coordinates");
   await ensureCdp(tabId);
   const duration=Math.max(40,Math.min(15000,Number(options.durationMs||700)));
   const press=options.press!==false;
   const release=options.release!==false;
   const button=String(options.button||"left");
+  if(!["left","middle","right"].includes(button))throw new Error("Invalid mouse button");
   const buttons=button==="right"?2:button==="middle"?4:1;
   const start=pts[0];
   await chrome.debugger.sendCommand({tabId},"Input.dispatchMouseEvent",{type:"mouseMoved",x:start.x,y:start.y,button:"none",buttons:0});
+  let last=start,finished=false;
+  try{
   if(press) await chrome.debugger.sendCommand({tabId},"Input.dispatchMouseEvent",{type:"mousePressed",x:start.x,y:start.y,button,buttons,clickCount:1});
   const segs=[]; let total=0;
   for(let i=1;i<pts.length;i++){ const d=Math.hypot(pts[i].x-pts[i-1].x,pts[i].y-pts[i-1].y); segs.push(d); total+=d; }
@@ -523,11 +555,16 @@ async function nativeMousePath(tabId, points, options={}) {
     for(let s=1;s<=steps;s++){
       const t=s/steps, x=a.x+(b.x-a.x)*t, y=a.y+(b.y-a.y)*t;
       await chrome.debugger.sendCommand({tabId},"Input.dispatchMouseEvent",{type:"mouseMoved",x,y,button:press?button:"none",buttons:press?buttons:0});
+      last={x,y};
       await sleep(Math.max(1,Math.round(duration*(seg/total)/steps)));
     }
   }
+  finished=true;
+  }finally{
+    if(press&&(release||!finished))await chrome.debugger.sendCommand({tabId},"Input.dispatchMouseEvent",{type:"mouseReleased",x:last.x,y:last.y,button,buttons:0,clickCount:1});
+    nativeButtons.set(tabId,press&&!release&&finished?buttons:0);
+  }
   const end=pts[pts.length-1];
-  if(press&&release) await chrome.debugger.sendCommand({tabId},"Input.dispatchMouseEvent",{type:"mouseReleased",x:end.x,y:end.y,button,buttons:0,clickCount:1});
   await runInTab(tabId,visualCursor,[end.x,end.y,false]).catch(()=>{});
   return {ok:true,points:pts.length,durationMs:duration,pressed:press,released:release};
 }
@@ -574,13 +611,13 @@ async function executeCommand(command,args={}){
     case "click": { const t=await tab(); return await runInTab(t.id,clickTarget,[args.selector||null,args.text||null]); }
     case "type": { const t=await tab(); return await runInTab(t.id,typeTarget,[args.selector,String(args.text??""),args.clearFirst!==false]); }
     case "navigate": { const t=await tab(); await chrome.tabs.update(t.id,{url:args.url}); return {navigated:true,tabId:t.id,url:args.url}; }
-    case "move_mouse": { const t=await tab(); const s=await chrome.storage.local.get(["cursorSize","cursorSpeed","cursorColor","clickColor","cursorEnabled","clickEffect"]); return await runInTab(t.id,pointTarget,[args.x,args.y,false,{size:s.cursorSize||30,speed:s.cursorSpeed||180,color:s.cursorColor||"#27e9f5",clickColor:s.clickColor||"#27e9f5",enabled:s.cursorEnabled!==false,clickEffect:s.clickEffect!==false}]); }
-    case "click_at": { const t=await tab(); const s=await chrome.storage.local.get(["cursorSize","cursorSpeed","cursorColor","clickColor","cursorEnabled","clickEffect"]); return await runInTab(t.id,pointTarget,[args.x,args.y,true,{size:s.cursorSize||30,speed:s.cursorSpeed||180,color:s.cursorColor||"#27e9f5",clickColor:s.clickColor||"#27e9f5",enabled:s.cursorEnabled!==false,clickEffect:s.clickEffect!==false}]); }
-    case "mouse_action": { const t=await tab(); return await runInTab(t.id,mouseAction,[args.kind,args.x,args.y,args.button||"left"]); }
+    case "move_mouse": { const t=await tab(); return await nativeMouseAction(t.id,{...args,kind:"mousemove"}); }
+    case "click_at": { const t=await tab(); return await nativeMouseAction(t.id,{...args,kind:"click"}); }
+    case "mouse_action": { const t=await tab(); return await nativeMouseAction(t.id,args); }
     case "draw_path": { const t=await tab(); return await runInTab(t.id,drawPath,[args.points||[],args.options||{}]); }
     case "native_mouse_path": { const t=await tab(); return await nativeMousePath(t.id,args.points||[],args.options||{}); }
     case "clear_drawings": { const t=await tab(); return await runInTab(t.id,clearDrawings,[]); }
-    case "drag_drop": { const t=await tab(); return await runInTab(t.id,dragDrop,[args.fromX,args.fromY,args.toX,args.toY]); }
+    case "drag_drop": { const t=await tab(); return await nativeMousePath(t.id,[{x:args.fromX,y:args.fromY},{x:args.toX,y:args.toY}],{press:true,release:true,durationMs:args.durationMs??300,button:args.button??"left"}); }
     case "inspect_form": { const t=await tab(); return await runInTab(t.id,inspectForm,[]); }
     case "fill_form": { const t=await tab(); return await runInTab(t.id,fillForm,[args.fields||[]]); }
     case "press_key": { const t=await tab(); return await runInTab(t.id,pressKey,[String(args.key||""),args.selector||null]); }
