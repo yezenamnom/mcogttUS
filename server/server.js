@@ -1,6 +1,7 @@
 import http from "node:http";
 import crypto from "node:crypto";
 import sharp from "sharp";
+import SftpClient from "ssh2-sftp-client";
 import { WebSocketServer, WebSocket } from "ws";
 import { McpServer, createMcpHandler } from "@modelcontextprotocol/server";
 import { toNodeHandler } from "@modelcontextprotocol/node";
@@ -8,6 +9,12 @@ import * as z from "zod/v4";
 
 const PORT = Number(process.env.PORT || 3000);
 const BRIDGE_TOKEN = process.env.BRIDGE_TOKEN || "";
+const HOSTINGER_SFTP_HOST = process.env.HOSTINGER_SFTP_HOST || "";
+const HOSTINGER_SFTP_PORT = Number(process.env.HOSTINGER_SFTP_PORT || 22);
+const HOSTINGER_SFTP_USER = process.env.HOSTINGER_SFTP_USER || "";
+const HOSTINGER_SFTP_PRIVATE_KEY = (process.env.HOSTINGER_SFTP_PRIVATE_KEY || "").replace(/\\n/g, "\n");
+const HOSTINGER_SFTP_DIR = process.env.HOSTINGER_SFTP_DIR || "";
+const HOSTINGER_SCREENSHOT_BASE_URL = (process.env.HOSTINGER_SCREENSHOT_BASE_URL || "").replace(/\/$/, "");
 if (!BRIDGE_TOKEN) console.warn("WARNING: BRIDGE_TOKEN is not set.");
 
 let browserSocket = null;
@@ -17,6 +24,83 @@ let desktopConnectedAt = null;
 const pending = new Map();
 const desktopPending = new Map();
 const wss = new WebSocketServer({ noServer: true });
+let sftpClient = null;
+let sftpConnectPromise = null;
+let lastSftpCleanupAt = 0;
+
+function sftpConfigured() {
+  return !!(
+    HOSTINGER_SFTP_HOST &&
+    HOSTINGER_SFTP_USER &&
+    HOSTINGER_SFTP_PRIVATE_KEY &&
+    HOSTINGER_SFTP_DIR &&
+    HOSTINGER_SCREENSHOT_BASE_URL
+  );
+}
+
+async function getSftpClient() {
+  if (!sftpConfigured()) throw new Error("Hostinger SFTP sharing is not configured.");
+  if (sftpClient) return sftpClient;
+  if (sftpConnectPromise) return sftpConnectPromise;
+
+  sftpConnectPromise = (async () => {
+    const client = new SftpClient();
+    await client.connect({
+      host: HOSTINGER_SFTP_HOST,
+      port: HOSTINGER_SFTP_PORT,
+      username: HOSTINGER_SFTP_USER,
+      privateKey: HOSTINGER_SFTP_PRIVATE_KEY,
+      readyTimeout: 15000,
+      keepaliveInterval: 10000,
+      keepaliveCountMax: 3
+    });
+    await client.mkdir(HOSTINGER_SFTP_DIR, true);
+    sftpClient = client;
+    client.on?.("error", () => { sftpClient = null; });
+    client.on?.("end", () => { sftpClient = null; });
+    client.on?.("close", () => { sftpClient = null; });
+    return client;
+  })();
+
+  try {
+    return await sftpConnectPromise;
+  } finally {
+    sftpConnectPromise = null;
+  }
+}
+
+async function uploadScreenshot(buffer, monitorNumber) {
+  const client = await getSftpClient();
+  const name = `m${monitorNumber}-${Date.now()}-${crypto.randomBytes(10).toString("hex")}.webp`;
+  const remotePath = `${HOSTINGER_SFTP_DIR}/${name}`;
+
+  try {
+    await client.put(buffer, remotePath);
+
+    const now = Date.now();
+    if (now - lastSftpCleanupAt > 300000) {
+      lastSftpCleanupAt = now;
+      void (async () => {
+        try {
+          const list = await client.list(HOSTINGER_SFTP_DIR);
+          const cutoff = Date.now() - 10 * 60 * 1000;
+          await Promise.all(
+            list
+              .filter(x => x.type === "-" && /^m\d+-\d+-[a-f0-9]+\.webp$/i.test(x.name))
+              .filter(x => (x.modifyTime || 0) < cutoff)
+              .map(x => client.delete(`${HOSTINGER_SFTP_DIR}/${x.name}`, true))
+          );
+        } catch {}
+      })();
+    }
+
+    return `${HOSTINGER_SCREENSHOT_BASE_URL}/${encodeURIComponent(name)}`;
+  } catch (err) {
+    try { await client.end(); } catch {}
+    sftpClient = null;
+    throw err;
+  }
+}
 
 function callBrowser(command, args = {}, timeoutMs = 20000) {
   if (!browserSocket || browserSocket.readyState !== WebSocket.OPEN) {
@@ -49,7 +133,7 @@ function callDesktop(command, args = {}, timeoutMs = 30000) {
 }
 
 function makeMcpServer() {
-  const server = new McpServer({ name: "gpt-us-browser-desktop", version: "0.7.15" });
+  const server = new McpServer({ name: "gpt-us-browser-desktop", version: "0.7.16" });
 
   server.registerTool("get_page", {
     description: "Read the active Comet tab: title, URL, visible text, and interactive elements.",
@@ -72,7 +156,7 @@ function makeMcpServer() {
   }, async ({ url }) => ({ content: [{ type: "text", text: JSON.stringify(await callBrowser("navigate", { url }), null, 2) }] }));
 
   server.registerTool("screenshot", {
-    description: "Capture each Windows monitor separately and return one PNG image per monitor.",
+    description: "Capture each Windows monitor separately. Returns a compact image for ChatGPT vision and, when Hostinger SFTP is configured, a shareable temporary URL for each monitor.",
     inputSchema: z.object({})
   }, async () => {
     const monitors = await callDesktop("desktop_monitors", {}, 30000);
@@ -91,43 +175,58 @@ function makeMcpServer() {
 
       const source = Buffer.from(String(shot.data), "base64");
 
-      // Keep a high-enough PNG for ChatGPT vision while avoiding oversized MCP payloads.
-      const rendered = await sharp(source)
-        .resize({ width: 1600, withoutEnlargement: true })
-        .png({ compressionLevel: 9, palette: true })
+      const modelCopy = await sharp(source)
+        .resize({ width: 1100, withoutEnlargement: true })
+        .webp({ quality: 45, effort: 4 })
         .toBuffer();
 
-      // Compact copy retained in metadata so the chat can materialize this monitor
-      // as a visible attachment when needed.
-      const displayCopy = await sharp(source)
-        .resize({ width: 360, withoutEnlargement: true })
-        .webp({ quality: 20, effort: 6 })
+      const shareCopy = await sharp(source)
+        .resize({ width: 1800, withoutEnlargement: true })
+        .webp({ quality: 68, effort: 4 })
         .toBuffer();
 
-      content.push({
-        type: "text",
-        text: JSON.stringify({
-          screenshot: true,
-          monitor: screenIndex + 1,
-          screen: screenIndex,
-          primary: !!monitor.primary,
-          monitorName: monitor.name || null,
-          x: shot.x ?? monitor.x,
-          y: shot.y ?? monitor.y,
-          sourceWidth: shot.width ?? monitor.width,
-          sourceHeight: shot.height ?? monitor.height,
-          returnedBytes: rendered.length,
-          displayMimeType: "image/webp",
-          displayBase64: displayCopy.toString("base64"),
-          displayBytes: displayCopy.length
-        })
-      });
+      let shareUrl = null;
+      let shareError = null;
+      if (sftpConfigured()) {
+        try {
+          shareUrl = await uploadScreenshot(shareCopy, screenIndex + 1);
+        } catch (e) {
+          shareError = e?.message || String(e);
+        }
+      }
 
+      const meta = {
+        screenshot: true,
+        monitor: screenIndex + 1,
+        screen: screenIndex,
+        primary: !!monitor.primary,
+        monitorName: monitor.name || null,
+        x: shot.x ?? monitor.x,
+        y: shot.y ?? monitor.y,
+        sourceWidth: shot.width ?? monitor.width,
+        sourceHeight: shot.height ?? monitor.height,
+        modelBytes: modelCopy.length,
+        shareBytes: shareCopy.length,
+        shareUrl,
+        shareError
+      };
+
+      content.push({ type: "text", text: JSON.stringify(meta) });
       content.push({
         type: "image",
-        data: rendered.toString("base64"),
-        mimeType: "image/png"
+        data: modelCopy.toString("base64"),
+        mimeType: "image/webp"
       });
+
+      if (shareUrl) {
+        content.push({
+          type: "resource_link",
+          uri: shareUrl,
+          name: `Monitor ${screenIndex + 1} screenshot`,
+          description: `Temporary shared screenshot for monitor ${screenIndex + 1}`,
+          mimeType: "image/webp"
+        });
+      }
     }
 
     if (!content.some(item => item.type === "image")) {
@@ -272,7 +371,7 @@ const httpServer = http.createServer((req, res) => {
     res.end(JSON.stringify({
       ok: true,
       service: "comet-chatgpt-bridge",
-      version: "0.7.15",
+      version: "0.7.16",
       mcp: "ready",
       browserConnected: !!browserSocket && browserSocket.readyState === WebSocket.OPEN,
       browserConnectedAt,
@@ -285,7 +384,7 @@ const httpServer = http.createServer((req, res) => {
 
   if (url.pathname === "/" && req.method === "GET") {
     res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({ service: "comet-chatgpt-bridge", version: "0.7.15", status: "ok", mcp: "/mcp" }));
+    res.end(JSON.stringify({ service: "comet-chatgpt-bridge", version: "0.7.16", status: "ok", mcp: "/mcp" }));
     return;
   }
 
@@ -346,7 +445,7 @@ wss.on("connection", (socket, req) => {
 });
 
 httpServer.listen(PORT, "0.0.0.0", () => {
-  console.log(`Comet ChatGPT Bridge v0.7.15 listening on 0.0.0.0:${PORT}`);
+  console.log(`Comet ChatGPT Bridge v0.7.16 listening on 0.0.0.0:${PORT}`);
   console.log("MCP v2 handler ready at /mcp | WSS /browser + /desktop | health /health");
 });
 
