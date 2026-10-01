@@ -1,5 +1,6 @@
 import http from "node:http";
 import crypto from "node:crypto";
+import sharp from "sharp";
 import { WebSocketServer, WebSocket } from "ws";
 import { McpServer, createMcpHandler } from "@modelcontextprotocol/server";
 import { toNodeHandler } from "@modelcontextprotocol/node";
@@ -48,7 +49,7 @@ function callDesktop(command, args = {}, timeoutMs = 30000) {
 }
 
 function makeMcpServer() {
-  const server = new McpServer({ name: "gpt-us-browser-desktop", version: "0.7.5" });
+  const server = new McpServer({ name: "gpt-us-browser-desktop", version: "0.7.6" });
 
   server.registerTool("get_page", {
     description: "Read the active Comet tab: title, URL, visible text, and interactive elements.",
@@ -76,9 +77,11 @@ function makeMcpServer() {
   }, async () => {
     const shot = await callDesktop("desktop_screenshot", { screen: 1 }, 30000);
     if (!shot?.data) throw new Error("Desktop agent did not return PNG image data");
+    const input = Buffer.from(shot.data, "base64");
+    const jpeg = await sharp(input).resize({ width: 1600, withoutEnlargement: true }).jpeg({ quality: 72, mozjpeg: true }).toBuffer();
     return { content: [
-      { type: "image", data: shot.data, mimeType: shot.mimeType || "image/png" },
-      { type: "text", text: JSON.stringify({ source:"desktop", screen:1, x:shot.x, y:shot.y, width:shot.width, height:shot.height }) }
+      { type: "image", data: jpeg.toString("base64"), mimeType: "image/jpeg" },
+      { type: "text", text: JSON.stringify({ source:"desktop", screen:1, x:shot.x, y:shot.y, width:shot.width, height:shot.height, deliveredWidth:1600, format:"jpeg", quality:72 }) }
     ] };
   });
 
@@ -217,7 +220,7 @@ const httpServer = http.createServer((req, res) => {
     res.end(JSON.stringify({
       ok: true,
       service: "comet-chatgpt-bridge",
-      version: "0.7.5",
+      version: "0.7.6",
       mcp: "ready",
       browserConnected: !!browserSocket && browserSocket.readyState === WebSocket.OPEN,
       browserConnectedAt,
@@ -230,7 +233,7 @@ const httpServer = http.createServer((req, res) => {
 
   if (url.pathname === "/" && req.method === "GET") {
     res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({ service: "comet-chatgpt-bridge", version: "0.7.5", status: "ok", mcp: "/mcp" }));
+    res.end(JSON.stringify({ service: "comet-chatgpt-bridge", version: "0.7.6", status: "ok", mcp: "/mcp" }));
     return;
   }
 
@@ -291,7 +294,7 @@ wss.on("connection", (socket, req) => {
 });
 
 httpServer.listen(PORT, "0.0.0.0", () => {
-  console.log(`Comet ChatGPT Bridge v0.7.5 listening on 0.0.0.0:${PORT}`);
+  console.log(`Comet ChatGPT Bridge v0.7.6 listening on 0.0.0.0:${PORT}`);
   console.log("MCP v2 handler ready at /mcp | WSS /browser + /desktop | health /health");
 });
 
