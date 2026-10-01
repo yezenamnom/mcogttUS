@@ -1,7 +1,7 @@
 let ws = null;
 let reconnectTimer = null;
 let pingTimer = null;
-const EXT_VERSION = "0.6.1";
+const EXT_VERSION = "0.6.2";
 const domState = new Map();
 const cdpAttached = new Set();
 
@@ -147,17 +147,37 @@ function typeTarget(selector,text,clearFirst) {
 }
 
 
+function visualCursor(x,y,click=false) {
+  let marker=document.getElementById("__cgb_cursor");
+  if(!marker){
+    marker=document.createElement("div"); marker.id="__cgb_cursor";
+    marker.innerHTML='<div style="width:0;height:0;border-top:8px solid transparent;border-bottom:8px solid transparent;border-left:14px solid #111;filter:drop-shadow(0 0 1px white) drop-shadow(0 1px 2px rgba(0,0,0,.35));transform:rotate(-45deg);transform-origin:2px 8px"></div>';
+    Object.assign(marker.style,{position:"fixed",width:"24px",height:"24px",zIndex:"2147483647",pointerEvents:"none",transition:"left .16s ease-out,top .16s ease-out",left:"0px",top:"0px"});
+    document.documentElement.appendChild(marker);
+  }
+  marker.style.left=Number(x)+"px"; marker.style.top=Number(y)+"px";
+  if(click){
+    const ring=document.createElement("div");
+    Object.assign(ring.style,{position:"fixed",left:Number(x)+"px",top:Number(y)+"px",width:"10px",height:"10px",border:"2px solid #111",borderRadius:"50%",zIndex:"2147483646",pointerEvents:"none",transform:"translate(-50%,-50%)",transition:"all .28s ease-out",opacity:"1"});
+    document.documentElement.appendChild(ring);
+    requestAnimationFrame(()=>{ring.style.width="34px";ring.style.height="34px";ring.style.opacity="0";});
+    setTimeout(()=>ring.remove(),320);
+  }
+  return true;
+}
 function pointTarget(x,y,clickIt) {
   x=Number(x); y=Number(y);
   if(!Number.isFinite(x)||!Number.isFinite(y)) throw new Error("x/y must be numbers");
   const el=document.elementFromPoint(x,y);
   if(!el) throw new Error("No element at coordinates");
-  let marker=document.getElementById("__cgb_cursor");
-  if(!marker){ marker=document.createElement("div"); marker.id="__cgb_cursor"; Object.assign(marker.style,{position:"fixed",width:"18px",height:"18px",border:"2px solid #ff3b30",borderRadius:"50%",zIndex:"2147483647",pointerEvents:"none",transform:"translate(-50%,-50%)",boxShadow:"0 0 0 2px rgba(255,255,255,.9)"}); document.documentElement.appendChild(marker); }
-  marker.style.left=x+"px"; marker.style.top=y+"px";
-  el.dispatchEvent(new MouseEvent("mousemove",{bubbles:true,clientX:x,clientY:y,view:window}));
-  el.dispatchEvent(new MouseEvent("mouseover",{bubbles:true,clientX:x,clientY:y,view:window}));
-  if(clickIt){ el.dispatchEvent(new MouseEvent("mousedown",{bubbles:true,clientX:x,clientY:y,view:window})); el.dispatchEvent(new MouseEvent("mouseup",{bubbles:true,clientX:x,clientY:y,view:window})); el.click(); }
+  visualCursor(x,y,!!clickIt);
+  const init={bubbles:true,cancelable:true,clientX:x,clientY:y,view:window,button:0,pointerType:"mouse"};
+  el.dispatchEvent(new PointerEvent("pointermove",init)); el.dispatchEvent(new MouseEvent("mousemove",init)); el.dispatchEvent(new MouseEvent("mouseover",init));
+  if(clickIt){
+    el.dispatchEvent(new PointerEvent("pointerdown",init)); el.dispatchEvent(new MouseEvent("mousedown",init));
+    el.dispatchEvent(new PointerEvent("pointerup",init)); el.dispatchEvent(new MouseEvent("mouseup",init)); el.dispatchEvent(new MouseEvent("click",init));
+    try{ el.click(); }catch{}
+  }
   const r=el.getBoundingClientRect();
   return {moved:true,clicked:!!clickIt,x,y,tag:el.tagName.toLowerCase(),text:(el.innerText||el.value||el.getAttribute("aria-label")||"").trim().slice(0,160),rect:{x:r.x,y:r.y,width:r.width,height:r.height}};
 }
@@ -215,12 +235,14 @@ function domDigest(maxChars=40000){
   return {url:location.href,title:document.title,text,interactive,at:Date.now()};
 }
 function mouseAction(kind,x,y,button="left"){
-  const el=document.elementFromPoint(Number(x),Number(y)); if(!el) throw new Error("No element at coordinates");
-  const init={bubbles:true,clientX:Number(x),clientY:Number(y),button:button==="right"?2:button==="middle"?1:0,view:window};
-  if(kind==="double"){ el.dispatchEvent(new MouseEvent("mousedown",init));el.dispatchEvent(new MouseEvent("mouseup",init));el.dispatchEvent(new MouseEvent("click",init));el.dispatchEvent(new MouseEvent("mousedown",init));el.dispatchEvent(new MouseEvent("mouseup",init));el.dispatchEvent(new MouseEvent("click",{...init,detail:2}));el.dispatchEvent(new MouseEvent("dblclick",{...init,detail:2})); }
+  x=Number(x); y=Number(y); visualCursor(x,y,kind==="double"||kind==="right"||kind==="mousedown"||kind==="mouseup");
+  const el=document.elementFromPoint(x,y); if(!el) throw new Error("No element at coordinates");
+  const btn=button==="right"?2:button==="middle"?1:0;
+  const init={bubbles:true,cancelable:true,clientX:x,clientY:y,button:btn,view:window,pointerType:"mouse"};
+  if(kind==="double"){ for(let i=0;i<2;i++){el.dispatchEvent(new PointerEvent("pointerdown",init));el.dispatchEvent(new MouseEvent("mousedown",init));el.dispatchEvent(new PointerEvent("pointerup",init));el.dispatchEvent(new MouseEvent("mouseup",init));el.dispatchEvent(new MouseEvent("click",{...init,detail:i+1}));} el.dispatchEvent(new MouseEvent("dblclick",{...init,detail:2})); }
   else if(kind==="right"){ el.dispatchEvent(new MouseEvent("contextmenu",{...init,button:2})); }
-  else { el.dispatchEvent(new MouseEvent(kind,{...init})); }
-  return {ok:true,kind,tag:el.tagName.toLowerCase()};
+  else { if(kind.startsWith("mouse")) el.dispatchEvent(new MouseEvent(kind,init)); else el.dispatchEvent(new PointerEvent(kind,init)); }
+  return {ok:true,kind,tag:el.tagName.toLowerCase(),x,y};
 }
 function dragDrop(fromX,fromY,toX,toY){
   const src=document.elementFromPoint(Number(fromX),Number(fromY)), dst=document.elementFromPoint(Number(toX),Number(toY));
