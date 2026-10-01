@@ -49,7 +49,7 @@ function callDesktop(command, args = {}, timeoutMs = 30000) {
 }
 
 function makeMcpServer() {
-  const server = new McpServer({ name: "gpt-us-browser-desktop", version: "0.7.6" });
+  const server = new McpServer({ name: "gpt-us-browser-desktop", version: "0.7.7" });
 
   server.registerTool("get_page", {
     description: "Read the active Comet tab: title, URL, visible text, and interactive elements.",
@@ -77,7 +77,7 @@ function makeMcpServer() {
   }, async () => {
     const shot = await callDesktop("desktop_screenshot", { screen: 1 }, 30000);
     if (!shot?.data) throw new Error("Desktop agent did not return PNG image data");
-    const png = String(shot.data).replace(/^data:image\\/png;base64,/, "");
+    const raw = String(shot.data);\n    const prefix = "data:image/png;base64,";\n    const png = raw.startsWith(prefix) ? raw.slice(prefix.length) : raw;
     return {
       content: [{ type: "image", data: png, mimeType: "image/png" }],
       structuredContent: { source: "desktop", screen: 1, width: shot.width, height: shot.height }
@@ -219,7 +219,7 @@ const httpServer = http.createServer((req, res) => {
     res.end(JSON.stringify({
       ok: true,
       service: "comet-chatgpt-bridge",
-      version: "0.7.6",
+      version: "0.7.7",
       mcp: "ready",
       browserConnected: !!browserSocket && browserSocket.readyState === WebSocket.OPEN,
       browserConnectedAt,
@@ -232,7 +232,7 @@ const httpServer = http.createServer((req, res) => {
 
   if (url.pathname === "/" && req.method === "GET") {
     res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({ service: "comet-chatgpt-bridge", version: "0.7.6", status: "ok", mcp: "/mcp" }));
+    res.end(JSON.stringify({ service: "comet-chatgpt-bridge", version: "0.7.7", status: "ok", mcp: "/mcp" }));
     return;
   }
 
@@ -293,7 +293,7 @@ wss.on("connection", (socket, req) => {
 });
 
 httpServer.listen(PORT, "0.0.0.0", () => {
-  console.log(`Comet ChatGPT Bridge v0.7.6 listening on 0.0.0.0:${PORT}`);
+  console.log(`Comet ChatGPT Bridge v0.7.7 listening on 0.0.0.0:${PORT}`);
   console.log("MCP v2 handler ready at /mcp | WSS /browser + /desktop | health /health");
 });
 
