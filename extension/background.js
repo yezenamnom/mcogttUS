@@ -74,7 +74,7 @@ async function targetTab(args={}) {
 function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
 async function ensureCdp(tabId){
   if(cdpAttached.has(tabId)) return;
-  await chrome.debugger.attach({tabId},"0.1");
+  await chrome.debugger.attach({tabId},"1.3");
   cdpAttached.add(tabId);
 }
 async function cdp(tabId,method,params={}){
