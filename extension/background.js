@@ -41,7 +41,7 @@ async function connect() {
       ws.send(JSON.stringify({ type: "result", id: msg.id, ok: false, error: String(error?.message || error) }));
     }
   };
-  ws.onclose = scheduleReconnect;
+  ws.onclose = () => { ws = null; scheduleReconnect(); };
   ws.onerror = () => { try { ws.close(); } catch {} };
 }
 
@@ -119,6 +119,12 @@ async function executeCommand(command,args){
 }
 chrome.runtime.onInstalled.addListener(()=>chrome.runtime.openOptionsPage());
 chrome.runtime.onStartup.addListener(connect);
-chrome.storage.onChanged.addListener(()=>{ try{ws?.close();}catch{}; setTimeout(connect,300); });
+chrome.storage.onChanged.addListener((changes, areaName)=>{
+  if (areaName !== "local" || (!changes.bridgeUrl && !changes.bridgeToken)) return;
+  clearTimeout(reconnectTimer);
+  try { ws?.close(); } catch {}
+  ws = null;
+  setTimeout(connect, 300);
+});
 chrome.action.onClicked.addListener(()=>chrome.runtime.openOptionsPage());
 connect();
