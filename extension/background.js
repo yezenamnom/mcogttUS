@@ -91,6 +91,11 @@ function typeTarget(selector,text,clearFirst) {
   else throw new Error("Target is not editable");
   return {typed:true};
 }
+
+function scrollPage(x,y,behavior) { window.scrollBy({left:x,top:y,behavior:behavior||"smooth"}); return {scrolled:true,x:window.scrollX,y:window.scrollY}; }
+function hoverTarget(selector,text) { let el=selector?document.querySelector(selector):null; if(!el&&text){const q=text.toLowerCase();el=[...document.querySelectorAll("a,button,input,select,textarea,[role='button'],*")].find(e=>(e.innerText||e.value||"").trim().toLowerCase().includes(q));} if(!el) throw new Error("Element not found"); el.scrollIntoView({block:"center"}); el.dispatchEvent(new MouseEvent("mouseover",{bubbles:true})); el.dispatchEvent(new MouseEvent("mouseenter",{bubbles:true})); return {hovered:true}; }
+function selectTarget(selector,value) { const el=document.querySelector(selector); if(!el||el.tagName!=="SELECT") throw new Error("Select element not found"); el.value=value; el.dispatchEvent(new Event("change",{bubbles:true})); return {selected:true,value:el.value}; }
+
 async function executeCommand(command,args){
   switch(command){
     case "get_page": { const tab=await activeTab(); const result=await runInTab(tab.id,pageSnapshot,[Math.min(Math.max(Number(args.maxChars||30000),1000),100000)]); return {tabId:tab.id,...result}; }
@@ -100,6 +105,15 @@ async function executeCommand(command,args){
     case "screenshot": { const tab=await activeTab(); const dataUrl=await chrome.tabs.captureVisibleTab(tab.windowId,{format:"png"}); return {tabId:tab.id,dataUrl}; }
     case "list_tabs": { const tabs=await chrome.tabs.query({currentWindow:true}); return tabs.map(t=>({id:t.id,active:t.active,title:t.title,url:t.url})); }
     case "activate_tab": { const tabId=Number(args.tabId); if(!Number.isInteger(tabId)) throw new Error("tabId must be an integer"); await chrome.tabs.update(tabId,{active:true}); return {activated:true,tabId}; }
+    case "new_tab": { const tab=await chrome.tabs.create({url:args.url||"about:blank",active:args.active!==false}); return {created:true,tabId:tab.id,url:tab.url}; }
+    case "close_tab": { const tabId=args.tabId?Number(args.tabId):(await activeTab()).id; await chrome.tabs.remove(tabId); return {closed:true,tabId}; }
+    case "duplicate_tab": { const tabId=args.tabId?Number(args.tabId):(await activeTab()).id; const tab=await chrome.tabs.duplicate(tabId); return {duplicated:true,tabId:tab.id}; }
+    case "reload": { const tab=await activeTab(); await chrome.tabs.reload(tab.id,{bypassCache:!!args.bypassCache}); return {reloaded:true,tabId:tab.id}; }
+    case "go_back": { const tab=await activeTab(); await chrome.tabs.goBack(tab.id); return {back:true,tabId:tab.id}; }
+    case "go_forward": { const tab=await activeTab(); await chrome.tabs.goForward(tab.id); return {forward:true,tabId:tab.id}; }
+    case "scroll": { const tab=await activeTab(); return await runInTab(tab.id,scrollPage,[Number(args.x||0),Number(args.y||0),args.behavior||"smooth"]); }
+    case "hover": { const tab=await activeTab(); return await runInTab(tab.id,hoverTarget,[args.selector||null,args.text||null]); }
+    case "select": { const tab=await activeTab(); return await runInTab(tab.id,selectTarget,[args.selector,String(args.value)]); }
     default: throw new Error(`Unknown command: ${command}`);
   }
 }
