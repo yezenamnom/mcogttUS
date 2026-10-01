@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Comet ChatGPT Bridge",
-  "version": "0.6.2",
-  "description": "Secure browser bridge with visible cursor, deep DOM, CDP and resilient click fallbacks.",
+  "version": "0.6.3",
+  "description": "Secure browser bridge with isolated visible cursor overlay, deep DOM, CDP and resilient click fallbacks.",
   "permissions": [
     "tabs",
     "scripting",
