@@ -49,7 +49,7 @@ function callDesktop(command, args = {}, timeoutMs = 30000) {
 }
 
 function makeMcpServer() {
-  const server = new McpServer({ name: "gpt-us-browser-desktop", version: "0.7.10" });
+  const server = new McpServer({ name: "gpt-us-browser-desktop", version: "0.7.11" });
 
   server.registerTool("get_page", {
     description: "Read the active Comet tab: title, URL, visible text, and interactive elements.",
@@ -72,29 +72,35 @@ function makeMcpServer() {
   }, async ({ url }) => ({ content: [{ type: "text", text: JSON.stringify(await callBrowser("navigate", { url }), null, 2) }] }));
 
   server.registerTool("screenshot", {
-    description: "Capture the primary Windows desktop monitor as a PNG image.",
+    description: "Capture the Windows desktop as a PNG image optimized for ChatGPT vision.",
     inputSchema: z.object({})
   }, async () => {
-    // Let the desktop agent capture the full virtual desktop instead of hard-coding
-    // monitor index 1. Return both MCP ImageContent and small diagnostics so clients
-    // that fail to render images still prove that the capture reached the MCP layer.
     const shot = await callDesktop("desktop_screenshot", {}, 30000);
     if (!shot?.data) throw new Error("Desktop agent did not return PNG image data");
-    const mimeType = shot.mimeType || "image/png";
+
+    // The native 5120px multi-monitor PNG can exceed the connector payload/render
+    // limit. Keep the original capture path untouched, but resize only the copy
+    // returned by this MCP tool so ChatGPT can actually receive and render it.
+    const source = Buffer.from(String(shot.data), "base64");
+    const rendered = await sharp(source)
+      .resize({ width: 1600, withoutEnlargement: true })
+      .png({ compressionLevel: 9, palette: true })
+      .toBuffer();
+
     return {
       content: [
-        { type: "image", data: String(shot.data), mimeType },
+        { type: "image", data: rendered.toString("base64"), mimeType: "image/png" },
         {
           type: "text",
           text: JSON.stringify({
             screenshot: true,
-            mimeType,
+            mimeType: "image/png",
             screen: shot.screen ?? "virtual",
             x: shot.x,
             y: shot.y,
-            width: shot.width,
-            height: shot.height,
-            base64Chars: String(shot.data).length
+            sourceWidth: shot.width,
+            sourceHeight: shot.height,
+            returnedBytes: rendered.length
           })
         }
       ]
@@ -236,7 +242,7 @@ const httpServer = http.createServer((req, res) => {
     res.end(JSON.stringify({
       ok: true,
       service: "comet-chatgpt-bridge",
-      version: "0.7.10",
+      version: "0.7.11",
       mcp: "ready",
       browserConnected: !!browserSocket && browserSocket.readyState === WebSocket.OPEN,
       browserConnectedAt,
@@ -249,7 +255,7 @@ const httpServer = http.createServer((req, res) => {
 
   if (url.pathname === "/" && req.method === "GET") {
     res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({ service: "comet-chatgpt-bridge", version: "0.7.10", status: "ok", mcp: "/mcp" }));
+    res.end(JSON.stringify({ service: "comet-chatgpt-bridge", version: "0.7.11", status: "ok", mcp: "/mcp" }));
     return;
   }
 
@@ -310,7 +316,7 @@ wss.on("connection", (socket, req) => {
 });
 
 httpServer.listen(PORT, "0.0.0.0", () => {
-  console.log(`Comet ChatGPT Bridge v0.7.10 listening on 0.0.0.0:${PORT}`);
+  console.log(`Comet ChatGPT Bridge v0.7.11 listening on 0.0.0.0:${PORT}`);
   console.log("MCP v2 handler ready at /mcp | WSS /browser + /desktop | health /health");
 });
 
