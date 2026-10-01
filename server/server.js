@@ -49,7 +49,7 @@ function callDesktop(command, args = {}, timeoutMs = 30000) {
 }
 
 function makeMcpServer() {
-  const server = new McpServer({ name: "gpt-us-browser-desktop", version: "0.7.12" });
+  const server = new McpServer({ name: "gpt-us-browser-desktop", version: "0.7.13" });
 
   server.registerTool("get_page", {
     description: "Read the active Comet tab: title, URL, visible text, and interactive elements.",
@@ -91,8 +91,8 @@ function makeMcpServer() {
     // in metadata so the chat can materialize the same screenshot as a visible
     // attachment without saving anything on the Railway server.
     const displayCopy = await sharp(source)
-      .resize({ width: 1000, withoutEnlargement: true })
-      .webp({ quality: 40, effort: 6 })
+      .resize({ width: 600, withoutEnlargement: true })
+      .webp({ quality: 25, effort: 6 })
       .toBuffer();
 
     return {
@@ -253,7 +253,7 @@ const httpServer = http.createServer((req, res) => {
     res.end(JSON.stringify({
       ok: true,
       service: "comet-chatgpt-bridge",
-      version: "0.7.12",
+      version: "0.7.13",
       mcp: "ready",
       browserConnected: !!browserSocket && browserSocket.readyState === WebSocket.OPEN,
       browserConnectedAt,
@@ -266,7 +266,7 @@ const httpServer = http.createServer((req, res) => {
 
   if (url.pathname === "/" && req.method === "GET") {
     res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({ service: "comet-chatgpt-bridge", version: "0.7.12", status: "ok", mcp: "/mcp" }));
+    res.end(JSON.stringify({ service: "comet-chatgpt-bridge", version: "0.7.13", status: "ok", mcp: "/mcp" }));
     return;
   }
 
@@ -327,7 +327,7 @@ wss.on("connection", (socket, req) => {
 });
 
 httpServer.listen(PORT, "0.0.0.0", () => {
-  console.log(`Comet ChatGPT Bridge v0.7.12 listening on 0.0.0.0:${PORT}`);
+  console.log(`Comet ChatGPT Bridge v0.7.13 listening on 0.0.0.0:${PORT}`);
   console.log("MCP v2 handler ready at /mcp | WSS /browser + /desktop | health /health");
 });
 
