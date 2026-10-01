@@ -1,0 +1,47 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import http from 'node:http';
+import crypto from 'node:crypto';
+import {createOwnerOAuth} from './oauth.js';
+
+test('owner OAuth: discovery, manual consent, PKCE, replay, expiry and restart',async()=>{
+ let clock=Date.now(),oauth;
+ const server=http.createServer(async(req,res)=>{await oauth.handle(req,res,new URL(req.url,issuer));});
+ await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+ const issuer=`http://127.0.0.1:${server.address().port}`,secret='synthetic-test-secret-not-a-real-credential';
+ oauth=createOwnerOAuth({secret,issuer,now:()=>clock});
+ const call=(path,body,headers={})=>fetch(issuer+path,{redirect:'manual',...(body?{method:'POST',body:new URLSearchParams(body),headers:{'content-type':'application/x-www-form-urlencoded',...headers}}:{headers})});
+ try{
+  assert.equal((await (await call('/.well-known/oauth-protected-resource')).json()).resource,issuer+'/mcp');
+  assert.equal((await (await call('/.well-known/oauth-authorization-server')).json()).authorization_response_iss_parameter_supported,true);
+  const register=uris=>fetch(issuer+'/oauth/register',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({redirect_uris:uris,token_endpoint_auth_method:'none'})});
+  assert.equal((await register(['https://evil.example/callback'])).status,400);
+  const redirect='https://chatgpt.com/connector_platform_oauth_redirect';
+  const client=await (await register([redirect])).json();
+  oauth=createOwnerOAuth({secret,issuer,now:()=>clock});
+  const verifier=crypto.randomBytes(32).toString('base64url');
+  const args={client_id:client.client_id,redirect_uri:redirect,response_type:'code',code_challenge_method:'S256',code_challenge:crypto.createHash('sha256').update(verifier).digest('base64url'),resource:issuer+'/mcp',scope:'computer:control',state:'synthetic-state'};
+  assert.equal((await call('/oauth/authorize?'+new URLSearchParams({...args,code_challenge_method:'plain'}))).status,400);
+  const page=await call('/oauth/authorize?'+new URLSearchParams(args));
+  assert.equal(page.status,200);
+  const cookie=page.headers.get('set-cookie').split(';')[0];
+  const request=(await page.text()).match(/name="request" value="([^"]+)"/)[1];
+  assert.equal((await call('/oauth/approve',{request,decision:'allow',owner_token:secret},{origin:issuer})).status,400);
+  assert.equal((await call('/oauth/approve',{request,decision:'allow',owner_token:'wrong'},{origin:issuer,cookie})).status,403);
+  const approved=await call('/oauth/approve',{request,decision:'allow',owner_token:secret},{origin:issuer,cookie});
+  assert.equal(approved.status,303);
+  const callback=new URL(approved.headers.get('location'));
+  assert.equal(callback.searchParams.get('iss'),issuer);
+  assert.equal(callback.searchParams.get('state'),args.state);
+  const exchange={grant_type:'authorization_code',code:callback.searchParams.get('code'),client_id:client.client_id,redirect_uri:redirect,resource:issuer+'/mcp',code_verifier:verifier};
+  const token=await (await call('/oauth/token',exchange)).json();
+  assert.equal(token.token_type,'Bearer');
+  assert.ok(oauth.accepts('Bearer '+token.access_token));
+  assert.equal((await call('/oauth/token',exchange)).status,400);
+  assert.equal(oauth.accepts('Bearer '+token.access_token+'tampered'),false);
+  assert.equal(createOwnerOAuth({secret,issuer:issuer+'/other'}).accepts('Bearer '+token.access_token),false);
+  clock+=3600001;
+  assert.equal(oauth.accepts('Bearer '+token.access_token),false);
+  assert.ok(oauth.accepts('Bearer '+secret));
+ }finally{await new Promise(resolve=>server.close(resolve));}
+});

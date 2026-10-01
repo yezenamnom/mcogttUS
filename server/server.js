@@ -2,6 +2,7 @@ import http from "node:http";
 import crypto from "node:crypto";
 import sharp from "sharp";
 import { locateViewport } from "./viewport-match.js";
+import { createOwnerOAuth } from "./oauth.js";
 import SftpClient from "ssh2-sftp-client";
 import { WebSocketServer, WebSocket } from "ws";
 import { McpServer, createMcpHandler } from "@modelcontextprotocol/server";
@@ -10,6 +11,7 @@ import * as z from "zod/v4";
 
 const PORT = Number(process.env.PORT || 3000);
 const BRIDGE_TOKEN = process.env.BRIDGE_TOKEN || "";
+const ownerOAuth=createOwnerOAuth({secret:BRIDGE_TOKEN,issuer:process.env.OAUTH_ISSUER||"https://mcogttus-production.up.railway.app"});
 const HOSTINGER_SFTP_HOST = process.env.HOSTINGER_SFTP_HOST || "";
 const HOSTINGER_SFTP_PORT = Number(process.env.HOSTINGER_SFTP_PORT || 22);
 const HOSTINGER_SFTP_USER = process.env.HOSTINGER_SFTP_USER || "";
@@ -426,7 +428,7 @@ function makeMcpServer() {
 const mcpHandler = createMcpHandler(() => makeMcpServer());
 const nodeMcpHandler = toNodeHandler(mcpHandler);
 
-const httpServer = http.createServer((req, res) => {
+const httpServer = http.createServer(async (req, res) => {
   let url;
   try { url = new URL(req.url || "/", "http://localhost"); }
   catch { res.writeHead(400); res.end("Bad Request"); return; }
@@ -455,16 +457,15 @@ const httpServer = http.createServer((req, res) => {
 
   if (url.pathname === "/mcp") {
     const supplied=String(req.headers.authorization||"");
-    const expected="Bearer "+BRIDGE_TOKEN;
-    const actualBytes=Buffer.from(supplied),expectedBytes=Buffer.from(expected);
-    if(!BRIDGE_TOKEN||actualBytes.length!==expectedBytes.length||!crypto.timingSafeEqual(actualBytes,expectedBytes)){
-      res.writeHead(401,{"content-type":"application/json","www-authenticate":"Bearer"});
+    if(!ownerOAuth.accepts(supplied)){
+      res.writeHead(401,{"content-type":"application/json","www-authenticate":ownerOAuth.challenge});
       res.end(JSON.stringify({error:"Unauthorized"}));return;
     }
     void nodeMcpHandler(req, res);
     return;
   }
 
+  if(await ownerOAuth.handle(req,res,url))return;
   res.writeHead(404, { "content-type": "application/json" });
   res.end(JSON.stringify({ error: "Not found" }));
 });
