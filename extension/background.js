@@ -1,7 +1,7 @@
 let ws = null;
 let reconnectTimer = null;
 let pingTimer = null;
-const EXT_VERSION = "0.9.2";
+const EXT_VERSION = "0.9.3";
 const domState = new Map();
 const cdpAttached = new Set();
 const networkState = new Map();
@@ -155,7 +155,7 @@ chrome.debugger.onEvent.addListener((source,method,params)=>{
 function bootstrapPageHelpers() {
   globalThis.__gptusShowWave?.();
   // Isolated-world state is reset by document navigation; reuse helpers within it.
-  if(globalThis.__gptusHelpersVersion==="0.9.2")return;
+  if(globalThis.__gptusHelpersVersion==="0.9.3")return;
   // Functions passed to chrome.scripting.executeScript do not retain the
   // background service worker's lexical scope. Publish the shared helpers
   // into the tab's isolated world before executing commands that reference them.
@@ -257,7 +257,7 @@ function bootstrapPageHelpers() {
       return {elementId:el.dataset.cgbId,tag:el.tagName.toLowerCase(),text:clean(el.innerText||el.getAttribute("aria-label")||el.placeholder||"").slice(0,180),visible:r.width>0&&r.height>0&&r.bottom>=0&&r.right>=0&&r.top<=innerHeight&&r.left<=innerWidth,disabled:!!el.disabled,rect:{x:r.x,y:r.y,width:r.width,height:r.height}};
     });
   };
-  globalThis.__gptusHelpersVersion="0.9.2";
+  globalThis.__gptusHelpersVersion="0.9.3";
 }
 async function runInTab(tabId, func, args = []) {
   await chrome.scripting.executeScript({ target: { tabId }, func: bootstrapPageHelpers });
