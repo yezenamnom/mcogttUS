@@ -1,7 +1,7 @@
 let ws = null;
 let reconnectTimer = null;
 let pingTimer = null;
-const EXT_VERSION = "0.6.5";
+const EXT_VERSION = "0.6.6";
 const domState = new Map();
 const cdpAttached = new Set();
 
@@ -82,7 +82,68 @@ async function cdp(tabId,method,params={}){
   return await chrome.debugger.sendCommand({tabId},method,params);
 }
 chrome.debugger.onDetach.addListener(source=>{ if(source.tabId) cdpAttached.delete(source.tabId); });
+function bootstrapPageHelpers() {
+  // Functions passed to chrome.scripting.executeScript do not retain the
+  // background service worker's lexical scope. Publish the shared helpers
+  // into the tab's isolated world before executing commands that reference them.
+  globalThis.deepElements = function(selector="*") {
+    const out=[]; const seen=new Set();
+    const walk=root=>{
+      if(!root||seen.has(root)) return; seen.add(root);
+      try {
+        for(const el of root.querySelectorAll(selector)) out.push(el);
+        for(const el of root.querySelectorAll("*")) if(el.shadowRoot) walk(el.shadowRoot);
+        for(const frame of root.querySelectorAll("iframe,frame")) {
+          try { if(frame.contentDocument) walk(frame.contentDocument); } catch {}
+        }
+      } catch {}
+    };
+    walk(document); return [...new Set(out)];
+  };
+
+  globalThis.visualCursor = function(x,y,click=false) {
+    x=Number(x); y=Number(y);
+    if(!Number.isFinite(x)||!Number.isFinite(y)) return false;
+    let host=document.getElementById("__cgb_cursor_host");
+    if(host && host.dataset.cgbCursorVersion!=="3"){ try{host.remove();}catch{} host=null; }
+    if(!host){
+      host=document.createElement("div");
+      host.id="__cgb_cursor_host"; host.dataset.cgbCursorVersion="3";
+      host.setAttribute("aria-hidden","true");
+      const s=host.style;
+      s.cssText="all:initial!important;display:block!important;position:fixed!important;width:28px!important;height:34px!important;margin:0!important;padding:0!important;overflow:visible!important;pointer-events:none!important;z-index:2147483647!important;transition:left .10s linear,top .10s linear!important;will-change:left,top!important;";
+      const svg=document.createElementNS("http://www.w3.org/2000/svg","svg");
+      svg.setAttribute("viewBox","0 0 28 34"); svg.setAttribute("width","28"); svg.setAttribute("height","34");
+      svg.style.cssText="display:block!important;overflow:visible!important;filter:drop-shadow(0 1px 2px rgba(0,0,0,.55))!important;";
+      const path=document.createElementNS("http://www.w3.org/2000/svg","path");
+      path.setAttribute("d","M2 1.5v25.2l6.8-6.4 4.7 10.7 5.2-2.4-4.7-10.3h10.2L2 1.5Z");
+      path.setAttribute("fill","#fff"); path.setAttribute("stroke","#111"); path.setAttribute("stroke-width","2.2"); path.setAttribute("stroke-linejoin","round");
+      svg.appendChild(path); host.appendChild(svg); (document.documentElement||document.body).appendChild(host);
+    }
+    host.style.setProperty("left",x+"px","important"); host.style.setProperty("top",y+"px","important");
+    if(click){
+      const ring=document.createElement("div"); const rs=ring.style;
+      rs.cssText="position:fixed!important;width:10px!important;height:10px!important;border:3px solid #1677ff!important;border-radius:999px!important;pointer-events:none!important;z-index:2147483646!important;transform:translate(-50%,-50%)!important;opacity:1!important;";
+      rs.setProperty("left",x+"px","important"); rs.setProperty("top",y+"px","important");
+      (document.documentElement||document.body).appendChild(ring);
+      const anim=ring.animate([{transform:"translate(-50%,-50%) scale(.4)",opacity:1},{transform:"translate(-50%,-50%) scale(3.6)",opacity:0}],{duration:380,easing:"ease-out"});
+      anim.finished.finally(()=>ring.remove());
+    }
+    return true;
+  };
+
+  // domDigest calls elementMap by name, so expose it in the same isolated world.
+  globalThis.elementMap = function() {
+    const clean=s=>(s||"").replace(/\\s+/g," ").trim();
+    return globalThis.deepElements("button,a,input,textarea,select,[role='button'],[role='menuitem'],[role='link'],[contenteditable='true'],[tabindex],[onclick]").slice(0,1200).map((el,i)=>{
+      if(!el.dataset.cgbId) el.dataset.cgbId="cgb-"+i+"-"+Math.random().toString(36).slice(2,7);
+      const r=el.getBoundingClientRect();
+      return {elementId:el.dataset.cgbId,tag:el.tagName.toLowerCase(),text:clean(el.innerText||el.getAttribute("aria-label")||el.placeholder||"").slice(0,180),visible:r.width>0&&r.height>0&&r.bottom>=0&&r.right>=0&&r.top<=innerHeight&&r.left<=innerWidth,disabled:!!el.disabled,rect:{x:r.x,y:r.y,width:r.width,height:r.height}};
+    });
+  };
+}
 async function runInTab(tabId, func, args = []) {
+  await chrome.scripting.executeScript({ target: { tabId }, func: bootstrapPageHelpers });
   const [out] = await chrome.scripting.executeScript({ target: { tabId }, func, args });
   return out?.result;
 }
