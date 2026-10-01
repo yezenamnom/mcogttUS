@@ -1,0 +1,17 @@
+{
+  "bridgeUrl": "https://mcogttus-production.up.railway.app",
+  "bridgeToken": "PUT_YOUR_TOKEN_HERE",
+  "localServerEnabled": true,
+  "localPort": 8765,
+  "permissions": {
+    "screen": true,
+    "mouse": true,
+    "keyboard": true,
+    "clipboard": true,
+    "windows": true,
+    "filesRead": true,
+    "filesWrite": false,
+    "processes": true,
+    "system": true
+  }
+}
