@@ -11,7 +11,10 @@ if (!BRIDGE_TOKEN) console.warn("WARNING: BRIDGE_TOKEN is not set.");
 
 let browserSocket = null;
 let browserConnectedAt = null;
+let desktopSocket = null;
+let desktopConnectedAt = null;
 const pending = new Map();
+const desktopPending = new Map();
 const wss = new WebSocketServer({ noServer: true });
 
 function callBrowser(command, args = {}, timeoutMs = 20000) {
@@ -26,6 +29,21 @@ function callBrowser(command, args = {}, timeoutMs = 20000) {
     }, timeoutMs);
     pending.set(id, { resolve, reject, timer });
     browserSocket.send(JSON.stringify({ type: "command", id, command, args }));
+  });
+}
+
+function callDesktop(command, args = {}, timeoutMs = 30000) {
+  if (!desktopSocket || desktopSocket.readyState !== WebSocket.OPEN) {
+    throw new Error("Windows desktop agent is not connected to the Railway bridge.");
+  }
+  const id = crypto.randomUUID();
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      desktopPending.delete(id);
+      reject(new Error(`Timed out waiting for desktop command: ${command}`));
+    }, timeoutMs);
+    desktopPending.set(id, { resolve, reject, timer });
+    desktopSocket.send(JSON.stringify({ type: "command", id, command, args }));
   });
 }
 
@@ -143,6 +161,21 @@ function makeMcpServer() {
   server.registerTool("cdp_status",{description:"Check CDP attachment status.",inputSchema:z.object({tabId:optTabId})},async args=>textResult("cdp_status",args));
   server.registerTool("cdp_command",{description:"Send an allowed Chrome DevTools Protocol command to the target Comet tab.",inputSchema:z.object({tabId:optTabId,method:z.string(),params:z.record(z.string(),z.any()).optional()})},async args=>textResult("cdp_command",args));
 
+  const desktopText = async (command,args={},timeout=30000) => ({ content:[{type:"text",text:JSON.stringify(await callDesktop(command,args,timeout),null,2)}] });
+  server.registerTool("desktop_info",{description:"Report Windows desktop-agent connection and machine info.",inputSchema:z.object({})},async()=>desktopText("desktop_info"));
+  server.registerTool("desktop_screen_size",{description:"Get the Windows virtual desktop dimensions.",inputSchema:z.object({})},async()=>desktopText("desktop_screen_size"));
+  server.registerTool("desktop_screenshot",{description:"Capture the full Windows desktop.",inputSchema:z.object({})},async()=>{
+    const shot=await callDesktop("desktop_screenshot",{},30000);
+    return {content:[{type:"image",data:shot.data,mimeType:shot.mimeType||"image/png"},{type:"text",text:JSON.stringify({x:shot.x,y:shot.y,width:shot.width,height:shot.height})}]};
+  });
+  server.registerTool("desktop_move_mouse",{description:"Smoothly move the real Windows mouse pointer.",inputSchema:z.object({x:z.number(),y:z.number(),durationMs:z.number().int().min(0).max(10000).optional()})},async args=>desktopText("desktop_move_mouse",args));
+  server.registerTool("desktop_click",{description:"Move and click the real Windows mouse.",inputSchema:z.object({x:z.number().optional(),y:z.number().optional(),durationMs:z.number().int().min(0).max(10000).optional(),button:z.enum(["left","right"]).optional(),count:z.number().int().min(1).max(3).optional()})},async args=>desktopText("desktop_click",args));
+  server.registerTool("desktop_mouse_path",{description:"Move the real Windows pointer smoothly through a path; optionally hold the mouse button for drawing or dragging.",inputSchema:z.object({points:z.array(z.object({x:z.number(),y:z.number()})).min(2).max(1000),durationMs:z.number().int().min(20).max(15000).optional(),press:z.boolean().optional(),button:z.enum(["left","right"]).optional()})},async args=>desktopText("desktop_mouse_path",args,30000));
+  server.registerTool("desktop_type_text",{description:"Type text with the real Windows keyboard into the focused control.",inputSchema:z.object({text:z.string().max(20000),intervalMs:z.number().int().min(0).max(1000).optional()})},async args=>desktopText("desktop_type_text",args));
+  server.registerTool("desktop_key_combo",{description:"Send a Windows keyboard shortcut.",inputSchema:z.object({keys:z.array(z.string()).min(1).max(8)})},async args=>desktopText("desktop_key_combo",args));
+  server.registerTool("desktop_file_exists",{description:"Check whether a local Windows file or directory exists.",inputSchema:z.object({path:z.string()})},async args=>desktopText("desktop_file_exists",args));
+  server.registerTool("desktop_list_files",{description:"List files and folders in a Windows directory.",inputSchema:z.object({path:z.string().optional()})},async args=>desktopText("desktop_list_files",args));
+
   return server;
 }
 
@@ -163,6 +196,8 @@ const httpServer = http.createServer((req, res) => {
       mcp: "ready",
       browserConnected: !!browserSocket && browserSocket.readyState === WebSocket.OPEN,
       browserConnectedAt,
+      desktopConnected: !!desktopSocket && desktopSocket.readyState === WebSocket.OPEN,
+      desktopConnectedAt,
       uptimeSeconds: Math.round(process.uptime())
     }));
     return;
@@ -186,7 +221,7 @@ const httpServer = http.createServer((req, res) => {
 httpServer.on("upgrade", (req, socket, head) => {
   let url;
   try { url = new URL(req.url || "/", "http://localhost"); } catch { socket.destroy(); return; }
-  if (url.pathname !== "/browser" || !BRIDGE_TOKEN || url.searchParams.get("token") !== BRIDGE_TOKEN) {
+  if (!["/browser","/desktop"].includes(url.pathname) || !BRIDGE_TOKEN || url.searchParams.get("token") !== BRIDGE_TOKEN) {
     socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
     socket.destroy();
     return;
@@ -194,10 +229,18 @@ httpServer.on("upgrade", (req, socket, head) => {
   wss.handleUpgrade(req, socket, head, ws => wss.emit("connection", ws, req));
 });
 
-wss.on("connection", socket => {
-  if (browserSocket && browserSocket.readyState === WebSocket.OPEN) browserSocket.close(4000, "Replaced by newer Comet connection");
-  browserSocket = socket;
-  browserConnectedAt = new Date().toISOString();
+wss.on("connection", (socket, req) => {
+  const path = new URL(req.url || "/", "http://localhost").pathname;
+  const isDesktop = path === "/desktop";
+  if (isDesktop) {
+    if (desktopSocket && desktopSocket.readyState === WebSocket.OPEN) desktopSocket.close(4001, "Replaced by newer desktop connection");
+    desktopSocket = socket;
+    desktopConnectedAt = new Date().toISOString();
+  } else {
+    if (browserSocket && browserSocket.readyState === WebSocket.OPEN) browserSocket.close(4000, "Replaced by newer Comet connection");
+    browserSocket = socket;
+    browserConnectedAt = new Date().toISOString();
+  }
 
   socket.on("message", raw => {
     let msg;
@@ -206,24 +249,25 @@ wss.on("connection", socket => {
       socket.send(JSON.stringify({ type: "pong", at: Date.now() }));
       return;
     }
-    if (msg.type === "result" && msg.id && pending.has(msg.id)) {
-      const item = pending.get(msg.id);
-      clearTimeout(item.timer);
-      pending.delete(msg.id);
-      msg.ok ? item.resolve(msg.result) : item.reject(new Error(msg.error || "Browser command failed"));
+    if (msg.type === "result" && msg.id) {
+      const map = isDesktop ? desktopPending : pending;
+      if (map.has(msg.id)) {
+        const item = map.get(msg.id);
+        clearTimeout(item.timer);
+        map.delete(msg.id);
+        msg.ok ? item.resolve(msg.result) : item.reject(new Error(msg.error || (isDesktop ? "Desktop command failed" : "Browser command failed")));
+      }
     }
   });
   socket.on("close", () => {
-    if (browserSocket === socket) {
-      browserSocket = null;
-      browserConnectedAt = null;
-    }
+    if (isDesktop && desktopSocket === socket) { desktopSocket = null; desktopConnectedAt = null; }
+    if (!isDesktop && browserSocket === socket) { browserSocket = null; browserConnectedAt = null; }
   });
 });
 
 httpServer.listen(PORT, "0.0.0.0", () => {
   console.log(`Comet ChatGPT Bridge v0.6.2 listening on 0.0.0.0:${PORT}`);
-  console.log("MCP v2 handler ready at /mcp | WSS /browser | health /health");
+  console.log("MCP v2 handler ready at /mcp | WSS /browser + /desktop | health /health");
 });
 
 process.on("SIGTERM", async () => {
