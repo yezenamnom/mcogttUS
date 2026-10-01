@@ -1,0 +1,1 @@
+ChatGPT Desktop Bridge v0.3\nBuild with build.bat. Configure Bridge URL/token in the GUI. Local helper is loopback-only and is for same-PC latency/testing; ChatGPT cloud continues through Railway. Permissions can be enabled/disabled in the app.
