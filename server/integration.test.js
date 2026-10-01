@@ -40,12 +40,18 @@ test("MCP routes combined mouse operations to desktop and serves health",async()
   assert.equal(wrong.status,401);
   const list=await rpc(2,"tools/list",{});
   assert.ok(list.result.tools.some(t=>t.name==="desktop_mouse_action"));
+  assert.ok(list.result.tools.some(t=>t.name==="gpt_us.desktop_mouse_action"));
   const reply=await rpc(3,"tools/call",{name:"desktop_mouse_action",arguments:{kind:"click",x:-100,y:50}});
   assert.equal(reply.result.isError,undefined);
   assert.equal(commands.length,1);
   assert.equal(commands[0].command,"desktop_mouse_action");
   assert.equal(commands[0].args.x,-100);
   assert.equal(JSON.parse(reply.result.content[0].text).executed,true);
+  const qualified=await rpc(4,"tools/call",{name:"gpt_us.desktop_mouse_action",arguments:{kind:"move",x:-200,y:75}});
+  assert.equal(qualified.result.isError,undefined);
+  assert.equal(commands.length,2);
+  assert.equal(commands[1].command,"desktop_mouse_action");
+  assert.equal(commands[1].args.kind,"move");
   assert.equal((await (await fetch(base+"/health")).json()).desktopConnected,true);
  }finally{socket?.close();child.kill();await new Promise(r=>child.exitCode!==null?r():child.once("exit",r));}
 });

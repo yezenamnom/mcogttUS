@@ -138,6 +138,22 @@ function callDesktop(command, args = {}, timeoutMs = 30000) {
 function makeMcpServer() {
   const server = new McpServer({ name: "gpt-us-browser-desktop", version: "0.7.17" });
 
+  // Some ChatGPT connector hosts forward the app-qualified tool name back to
+  // the MCP server (for example `gpt_us.bridge_info`) instead of stripping the
+  // connector namespace. Keep every canonical tool unchanged and register a
+  // compatibility alias that invokes the exact same validated handler.
+  const registerCanonicalTool = server.registerTool.bind(server);
+  server.registerTool = (name, config, handler) => {
+    const canonical = registerCanonicalTool(name, config, handler);
+    if (!name.startsWith("gpt_us.")) {
+      registerCanonicalTool(`gpt_us.${name}`, {
+        ...config,
+        description: `${config.description || name} Compatibility alias for qualified ChatGPT connector calls.`
+      }, handler);
+    }
+    return canonical;
+  };
+
   server.registerTool("get_page", {
     description: "Read the active Comet tab: title, URL, visible text, and interactive elements.",
     inputSchema: z.object({ maxChars: z.number().int().min(1000).max(100000).optional() })
