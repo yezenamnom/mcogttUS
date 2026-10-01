@@ -49,7 +49,7 @@ function callDesktop(command, args = {}, timeoutMs = 30000) {
 }
 
 function makeMcpServer() {
-  const server = new McpServer({ name: "gpt-us-browser-desktop", version: "0.7.14" });
+  const server = new McpServer({ name: "gpt-us-browser-desktop", version: "0.7.15" });
 
   server.registerTool("get_page", {
     description: "Read the active Comet tab: title, URL, visible text, and interactive elements.",
@@ -100,8 +100,8 @@ function makeMcpServer() {
       // Compact copy retained in metadata so the chat can materialize this monitor
       // as a visible attachment when needed.
       const displayCopy = await sharp(source)
-        .resize({ width: 900, withoutEnlargement: true })
-        .webp({ quality: 35, effort: 6 })
+        .resize({ width: 360, withoutEnlargement: true })
+        .webp({ quality: 20, effort: 6 })
         .toBuffer();
 
       content.push({
@@ -272,7 +272,7 @@ const httpServer = http.createServer((req, res) => {
     res.end(JSON.stringify({
       ok: true,
       service: "comet-chatgpt-bridge",
-      version: "0.7.14",
+      version: "0.7.15",
       mcp: "ready",
       browserConnected: !!browserSocket && browserSocket.readyState === WebSocket.OPEN,
       browserConnectedAt,
@@ -285,7 +285,7 @@ const httpServer = http.createServer((req, res) => {
 
   if (url.pathname === "/" && req.method === "GET") {
     res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({ service: "comet-chatgpt-bridge", version: "0.7.14", status: "ok", mcp: "/mcp" }));
+    res.end(JSON.stringify({ service: "comet-chatgpt-bridge", version: "0.7.15", status: "ok", mcp: "/mcp" }));
     return;
   }
 
@@ -346,7 +346,7 @@ wss.on("connection", (socket, req) => {
 });
 
 httpServer.listen(PORT, "0.0.0.0", () => {
-  console.log(`Comet ChatGPT Bridge v0.7.14 listening on 0.0.0.0:${PORT}`);
+  console.log(`Comet ChatGPT Bridge v0.7.15 listening on 0.0.0.0:${PORT}`);
   console.log("MCP v2 handler ready at /mcp | WSS /browser + /desktop | health /health");
 });
 
