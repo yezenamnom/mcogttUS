@@ -30,7 +30,7 @@ function callBrowser(command, args = {}, timeoutMs = 20000) {
 }
 
 function makeMcpServer() {
-  const server = new McpServer({ name: "comet-browser", version: "0.3.0" });
+  const server = new McpServer({ name: "comet-browser", version: "0.4.0" });
 
   server.registerTool("get_page", {
     description: "Read the active Comet tab: title, URL, visible text, and interactive elements.",
@@ -67,6 +67,25 @@ function makeMcpServer() {
     inputSchema: z.object({ tabId: z.number().int() })
   }, async ({ tabId }) => ({ content: [{ type: "text", text: JSON.stringify(await callBrowser("activate_tab", { tabId }), null, 2) }] }));
 
+  server.registerTool("new_tab", { description: "Open a new Comet tab.", inputSchema: z.object({ url: z.url().optional(), active: z.boolean().optional() }) },
+    async args => ({ content: [{ type: "text", text: JSON.stringify(await callBrowser("new_tab", args), null, 2) }] }));
+  server.registerTool("close_tab", { description: "Close a tab; defaults to the active tab.", inputSchema: z.object({ tabId: z.number().int().optional() }) },
+    async args => ({ content: [{ type: "text", text: JSON.stringify(await callBrowser("close_tab", args), null, 2) }] }));
+  server.registerTool("duplicate_tab", { description: "Duplicate a tab; defaults to the active tab.", inputSchema: z.object({ tabId: z.number().int().optional() }) },
+    async args => ({ content: [{ type: "text", text: JSON.stringify(await callBrowser("duplicate_tab", args), null, 2) }] }));
+  server.registerTool("reload", { description: "Reload the active tab.", inputSchema: z.object({ bypassCache: z.boolean().optional() }) },
+    async args => ({ content: [{ type: "text", text: JSON.stringify(await callBrowser("reload", args), null, 2) }] }));
+  server.registerTool("go_back", { description: "Go back in the active tab history.", inputSchema: z.object({}) },
+    async () => ({ content: [{ type: "text", text: JSON.stringify(await callBrowser("go_back"), null, 2) }] }));
+  server.registerTool("go_forward", { description: "Go forward in the active tab history.", inputSchema: z.object({}) },
+    async () => ({ content: [{ type: "text", text: JSON.stringify(await callBrowser("go_forward"), null, 2) }] }));
+  server.registerTool("scroll", { description: "Scroll the active page by x/y pixels.", inputSchema: z.object({ x: z.number().optional(), y: z.number().optional(), behavior: z.enum(["auto","smooth"]).optional() }) },
+    async args => ({ content: [{ type: "text", text: JSON.stringify(await callBrowser("scroll", args), null, 2) }] }));
+  server.registerTool("hover", { description: "Hover an element by CSS selector or visible text.", inputSchema: z.object({ selector: z.string().optional(), text: z.string().optional() }) },
+    async args => ({ content: [{ type: "text", text: JSON.stringify(await callBrowser("hover", args), null, 2) }] }));
+  server.registerTool("select", { description: "Choose a value in a select element.", inputSchema: z.object({ selector: z.string(), value: z.string() }) },
+    async args => ({ content: [{ type: "text", text: JSON.stringify(await callBrowser("select", args), null, 2) }] }));
+
   return server;
 }
 
@@ -83,7 +102,7 @@ const httpServer = http.createServer((req, res) => {
     res.end(JSON.stringify({
       ok: true,
       service: "comet-chatgpt-bridge",
-      version: "0.3.0",
+      version: "0.4.0",
       mcp: "ready",
       browserConnected: !!browserSocket && browserSocket.readyState === WebSocket.OPEN,
       browserConnectedAt,
@@ -94,7 +113,7 @@ const httpServer = http.createServer((req, res) => {
 
   if (url.pathname === "/" && req.method === "GET") {
     res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({ service: "comet-chatgpt-bridge", version: "0.3.0", status: "ok", mcp: "/mcp" }));
+    res.end(JSON.stringify({ service: "comet-chatgpt-bridge", version: "0.4.0", status: "ok", mcp: "/mcp" }));
     return;
   }
 
@@ -146,7 +165,7 @@ wss.on("connection", socket => {
 });
 
 httpServer.listen(PORT, "0.0.0.0", () => {
-  console.log(`Comet ChatGPT Bridge v0.3.0 listening on 0.0.0.0:${PORT}`);
+  console.log(`Comet ChatGPT Bridge v0.4.0 listening on 0.0.0.0:${PORT}`);
   console.log("MCP v2 handler ready at /mcp | WSS /browser | health /health");
 });
 
