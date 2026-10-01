@@ -30,7 +30,7 @@ function callBrowser(command, args = {}, timeoutMs = 20000) {
 }
 
 function makeMcpServer() {
-  const server = new McpServer({ name: "comet-browser", version: "0.6.0" });
+  const server = new McpServer({ name: "comet-browser", version: "0.6.1" });
 
   server.registerTool("get_page", {
     description: "Read the active Comet tab: title, URL, visible text, and interactive elements.",
@@ -38,7 +38,7 @@ function makeMcpServer() {
   }, async ({ maxChars }) => ({ content: [{ type: "text", text: JSON.stringify(await callBrowser("get_page", { maxChars }), null, 2) }] }));
 
   server.registerTool("click", {
-    description: "Click an element in the active tab by CSS selector or visible text.",
+    description: "Click by CSS selector or visible text, with deep DOM fallback across open Shadow DOM and same-origin frames.",
     inputSchema: z.object({ selector: z.string().optional(), text: z.string().optional() })
   }, async args => ({ content: [{ type: "text", text: JSON.stringify(await callBrowser("click", args), null, 2) }] }));
 
@@ -127,7 +127,7 @@ function makeMcpServer() {
 
   server.registerTool("bridge_info",{description:"Report extension capabilities and connection state.",inputSchema:z.object({})},async()=>textResult("bridge_info"));
   server.registerTool("get_viewport",{description:"Get viewport size, DPR, scroll position and document dimensions.",inputSchema:z.object({tabId:optTabId})},async args=>textResult("get_viewport",args));
-  server.registerTool("element_map",{description:"Map interactive elements with bridge IDs and rectangles.",inputSchema:z.object({tabId:optTabId})},async args=>textResult("element_map",args));
+  server.registerTool("element_map",{description:"Map interactive elements with bridge IDs and rectangles, including open Shadow DOM and same-origin frames.",inputSchema:z.object({tabId:optTabId})},async args=>textResult("element_map",args));
   server.registerTool("dom_watch",{description:"Capture page state and report whether it changed.",inputSchema:z.object({tabId:optTabId,maxChars:z.number().int().min(1000).max(100000).optional()})},async args=>textResult("dom_watch",args));
   server.registerTool("dom_diff",{description:"Return compact changes since the previous page baseline.",inputSchema:z.object({tabId:optTabId,maxChars:z.number().int().min(1000).max(100000).optional()})},async args=>textResult("dom_diff",args));
   server.registerTool("wait_for",{description:"Wait for a selector, page text, or page completion.",inputSchema:z.object({tabId:optTabId,selector:z.string().optional(),text:z.string().optional(),timeoutMs:z.number().int().min(100).max(60000).optional(),intervalMs:z.number().int().min(50).max(2000).optional()})},async args=>textResult("wait_for",args,65000));
@@ -156,7 +156,7 @@ const httpServer = http.createServer((req, res) => {
     res.end(JSON.stringify({
       ok: true,
       service: "comet-chatgpt-bridge",
-      version: "0.6.0",
+      version: "0.6.1",
       mcp: "ready",
       browserConnected: !!browserSocket && browserSocket.readyState === WebSocket.OPEN,
       browserConnectedAt,
@@ -167,7 +167,7 @@ const httpServer = http.createServer((req, res) => {
 
   if (url.pathname === "/" && req.method === "GET") {
     res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({ service: "comet-chatgpt-bridge", version: "0.6.0", status: "ok", mcp: "/mcp" }));
+    res.end(JSON.stringify({ service: "comet-chatgpt-bridge", version: "0.6.1", status: "ok", mcp: "/mcp" }));
     return;
   }
 
@@ -219,7 +219,7 @@ wss.on("connection", socket => {
 });
 
 httpServer.listen(PORT, "0.0.0.0", () => {
-  console.log(`Comet ChatGPT Bridge v0.6.0 listening on 0.0.0.0:${PORT}`);
+  console.log(`Comet ChatGPT Bridge v0.6.1 listening on 0.0.0.0:${PORT}`);
   console.log("MCP v2 handler ready at /mcp | WSS /browser | health /health");
 });
 
