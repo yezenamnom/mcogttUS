@@ -1,33 +1,115 @@
-import express from "express";
 import http from "node:http";
 import crypto from "node:crypto";
 import { WebSocketServer, WebSocket } from "ws";
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { z } from "zod";
+import { McpServer, createMcpHandler } from "@modelcontextprotocol/server";
+import { toNodeHandler } from "@modelcontextprotocol/node";
+import * as z from "zod/v4";
 
 const PORT = Number(process.env.PORT || 3000);
 const BRIDGE_TOKEN = process.env.BRIDGE_TOKEN || "";
 if (!BRIDGE_TOKEN) console.warn("WARNING: BRIDGE_TOKEN is not set.");
 
-const app = express();
-app.use(express.json({ limit: "2mb" }));
-const httpServer = http.createServer(app);
-const wss = new WebSocketServer({ noServer: true });
-
 let browserSocket = null;
 let browserConnectedAt = null;
 const pending = new Map();
+const wss = new WebSocketServer({ noServer: true });
 
-function authorized(req) {
-  if (!BRIDGE_TOKEN) return false;
-  const auth = req.headers.authorization || "";
-  return auth === `Bearer ${BRIDGE_TOKEN}`;
+function callBrowser(command, args = {}, timeoutMs = 20000) {
+  if (!browserSocket || browserSocket.readyState !== WebSocket.OPEN) {
+    throw new Error("Comet extension is not connected to the Railway bridge.");
+  }
+  const id = crypto.randomUUID();
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      pending.delete(id);
+      reject(new Error(`Timed out waiting for browser command: ${command}`));
+    }, timeoutMs);
+    pending.set(id, { resolve, reject, timer });
+    browserSocket.send(JSON.stringify({ type: "command", id, command, args }));
+  });
 }
+
+function makeMcpServer() {
+  const server = new McpServer({ name: "comet-browser", version: "0.3.0" });
+
+  server.registerTool("get_page", {
+    description: "Read the active Comet tab: title, URL, visible text, and interactive elements.",
+    inputSchema: z.object({ maxChars: z.number().int().min(1000).max(100000).optional() })
+  }, async ({ maxChars }) => ({ content: [{ type: "text", text: JSON.stringify(await callBrowser("get_page", { maxChars }), null, 2) }] }));
+
+  server.registerTool("click", {
+    description: "Click an element in the active tab by CSS selector or visible text.",
+    inputSchema: z.object({ selector: z.string().optional(), text: z.string().optional() })
+  }, async args => ({ content: [{ type: "text", text: JSON.stringify(await callBrowser("click", args), null, 2) }] }));
+
+  server.registerTool("type", {
+    description: "Type text into an editable element selected by CSS selector.",
+    inputSchema: z.object({ selector: z.string(), text: z.string(), clearFirst: z.boolean().optional() })
+  }, async args => ({ content: [{ type: "text", text: JSON.stringify(await callBrowser("type", args), null, 2) }] }));
+
+  server.registerTool("navigate", {
+    description: "Navigate the active Comet tab to a URL.",
+    inputSchema: z.object({ url: z.url() })
+  }, async ({ url }) => ({ content: [{ type: "text", text: JSON.stringify(await callBrowser("navigate", { url }), null, 2) }] }));
+
+  server.registerTool("screenshot", {
+    description: "Capture a PNG screenshot of the visible area of the active Comet tab.",
+    inputSchema: z.object({})
+  }, async () => ({ content: [{ type: "text", text: JSON.stringify(await callBrowser("screenshot"), null, 2) }] }));
+
+  server.registerTool("list_tabs", {
+    description: "List tabs in the current Comet window.",
+    inputSchema: z.object({})
+  }, async () => ({ content: [{ type: "text", text: JSON.stringify(await callBrowser("list_tabs"), null, 2) }] }));
+
+  server.registerTool("activate_tab", {
+    description: "Activate a Comet tab by tab ID.",
+    inputSchema: z.object({ tabId: z.number().int() })
+  }, async ({ tabId }) => ({ content: [{ type: "text", text: JSON.stringify(await callBrowser("activate_tab", { tabId }), null, 2) }] }));
+
+  return server;
+}
+
+const mcpHandler = createMcpHandler(() => makeMcpServer());
+const nodeMcpHandler = toNodeHandler(mcpHandler);
+
+const httpServer = http.createServer((req, res) => {
+  let url;
+  try { url = new URL(req.url || "/", "http://localhost"); }
+  catch { res.writeHead(400); res.end("Bad Request"); return; }
+
+  if (url.pathname === "/health" && req.method === "GET") {
+    res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
+    res.end(JSON.stringify({
+      ok: true,
+      service: "comet-chatgpt-bridge",
+      version: "0.3.0",
+      mcp: "ready",
+      browserConnected: !!browserSocket && browserSocket.readyState === WebSocket.OPEN,
+      browserConnectedAt,
+      uptimeSeconds: Math.round(process.uptime())
+    }));
+    return;
+  }
+
+  if (url.pathname === "/" && req.method === "GET") {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ service: "comet-chatgpt-bridge", version: "0.3.0", status: "ok", mcp: "/mcp" }));
+    return;
+  }
+
+  if (url.pathname === "/mcp") {
+    void nodeMcpHandler(req, res);
+    return;
+  }
+
+  res.writeHead(404, { "content-type": "application/json" });
+  res.end(JSON.stringify({ error: "Not found" }));
+});
 
 httpServer.on("upgrade", (req, socket, head) => {
   let url;
-  try { url = new URL(req.url, "http://localhost"); } catch { socket.destroy(); return; }
+  try { url = new URL(req.url || "/", "http://localhost"); } catch { socket.destroy(); return; }
   if (url.pathname !== "/browser" || !BRIDGE_TOKEN || url.searchParams.get("token") !== BRIDGE_TOKEN) {
     socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
     socket.destroy();
@@ -55,7 +137,6 @@ wss.on("connection", socket => {
       msg.ok ? item.resolve(msg.result) : item.reject(new Error(msg.error || "Browser command failed"));
     }
   });
-
   socket.on("close", () => {
     if (browserSocket === socket) {
       browserSocket = null;
@@ -64,83 +145,12 @@ wss.on("connection", socket => {
   });
 });
 
-function callBrowser(command, args = {}, timeoutMs = 20000) {
-  if (!browserSocket || browserSocket.readyState !== WebSocket.OPEN) {
-    throw new Error("Comet extension is not connected to the Railway bridge.");
-  }
-  const id = crypto.randomUUID();
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      pending.delete(id);
-      reject(new Error(`Timed out waiting for browser command: ${command}`));
-    }, timeoutMs);
-    pending.set(id, { resolve, reject, timer });
-    browserSocket.send(JSON.stringify({ type: "command", id, command, args }));
-  });
-}
-
-function createMcpServer() {
-  const server = new McpServer({ name: "comet-browser", version: "0.2.1" });
-
-  server.tool("get_page", "Read the active Comet tab: title, URL, visible text, and interactive elements.",
-    { maxChars: z.number().int().min(1000).max(100000).optional() },
-    async ({ maxChars }) => ({ content: [{ type: "text", text: JSON.stringify(await callBrowser("get_page", { maxChars }), null, 2) }] }));
-
-  server.tool("click", "Click an element in the active tab by CSS selector or visible text.",
-    { selector: z.string().optional(), text: z.string().optional() },
-    async args => ({ content: [{ type: "text", text: JSON.stringify(await callBrowser("click", args), null, 2) }] }));
-
-  server.tool("type", "Type text into an editable element selected by CSS selector.",
-    { selector: z.string(), text: z.string(), clearFirst: z.boolean().optional() },
-    async args => ({ content: [{ type: "text", text: JSON.stringify(await callBrowser("type", args), null, 2) }] }));
-
-  server.tool("navigate", "Navigate the active Comet tab to a URL.",
-    { url: z.string().url() },
-    async ({ url }) => ({ content: [{ type: "text", text: JSON.stringify(await callBrowser("navigate", { url }), null, 2) }] }));
-
-  server.tool("screenshot", "Capture a PNG screenshot of the visible area of the active Comet tab.",
-    {}, async () => ({ content: [{ type: "text", text: JSON.stringify(await callBrowser("screenshot"), null, 2) }] }));
-
-  server.tool("list_tabs", "List tabs in the current Comet window.",
-    {}, async () => ({ content: [{ type: "text", text: JSON.stringify(await callBrowser("list_tabs"), null, 2) }] }));
-
-  server.tool("activate_tab", "Activate a Comet tab by tab ID.",
-    { tabId: z.number().int() },
-    async ({ tabId }) => ({ content: [{ type: "text", text: JSON.stringify(await callBrowser("activate_tab", { tabId }), null, 2) }] }));
-
-  return server;
-}
-
-app.get("/", (_req, res) => res.json({ service: "comet-chatgpt-bridge", version: "0.2.1", status: "ok" }));
-app.get("/health", (_req, res) => res.status(200).json({
-  ok: true,
-  service: "comet-chatgpt-bridge",
-  version: "0.2.1",
-  browserConnected: !!browserSocket && browserSocket.readyState === WebSocket.OPEN,
-  browserConnectedAt,
-  uptimeSeconds: Math.round(process.uptime())
-}));
-
-app.all("/mcp", async (req, res) => {
-  if (!authorized(req)) return res.status(401).json({ error: "Unauthorized" });
-  if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
-
-  const mcp = createMcpServer();
-  const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
-  res.on("close", () => {
-    try { transport.close(); } catch {}
-    try { mcp.close(); } catch {}
-  });
-  try {
-    await mcp.connect(transport);
-    await transport.handleRequest(req, res, req.body);
-  } catch (error) {
-    console.error("MCP request failed:", error);
-    if (!res.headersSent) res.status(500).json({ error: "MCP request failed" });
-  }
+httpServer.listen(PORT, "0.0.0.0", () => {
+  console.log(`Comet ChatGPT Bridge v0.3.0 listening on 0.0.0.0:${PORT}`);
+  console.log("MCP v2 handler ready at /mcp | WSS /browser | health /health");
 });
 
-httpServer.listen(PORT, "0.0.0.0", () => {
-  console.log(`Comet ChatGPT Bridge v0.2.1 listening on 0.0.0.0:${PORT}`);
-  console.log("HTTP health: /health | WebSocket: /browser | MCP: /mcp");
+process.on("SIGTERM", async () => {
+  try { await mcpHandler.close(); } catch {}
+  httpServer.close(() => process.exit(0));
 });
