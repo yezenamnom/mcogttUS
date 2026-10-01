@@ -1,7 +1,7 @@
 let ws = null;
 let reconnectTimer = null;
 let pingTimer = null;
-const EXT_VERSION = "0.6.6";
+const EXT_VERSION = "0.7.0";
 const domState = new Map();
 const cdpAttached = new Set();
 
@@ -436,6 +436,37 @@ async function mouseAction(kind,x,y,button="left"){
   else { if(kind.startsWith("mouse")) el.dispatchEvent(new MouseEvent(kind,init)); else el.dispatchEvent(new PointerEvent(kind,init)); }
   return {ok:true,kind:kind,tag:el.tagName.toLowerCase(),x:x,y:y};
 }
+
+async function nativeMousePath(tabId, points, options={}) {
+  const pts=(Array.isArray(points)?points:[]).slice(0,3000).map(p=>({x:Number(p.x),y:Number(p.y)})).filter(p=>Number.isFinite(p.x)&&Number.isFinite(p.y));
+  if(pts.length<2) throw new Error("native_mouse_path needs at least two valid points");
+  await ensureCdp(tabId);
+  const duration=Math.max(40,Math.min(15000,Number(options.durationMs||700)));
+  const press=options.press!==false;
+  const release=options.release!==false;
+  const button=String(options.button||"left");
+  const buttons=button==="right"?2:button==="middle"?4:1;
+  const start=pts[0];
+  await chrome.debugger.sendCommand({tabId},"Input.dispatchMouseEvent",{type:"mouseMoved",x:start.x,y:start.y,button:"none",buttons:0});
+  if(press) await chrome.debugger.sendCommand({tabId},"Input.dispatchMouseEvent",{type:"mousePressed",x:start.x,y:start.y,button,buttons,clickCount:1});
+  const segs=[]; let total=0;
+  for(let i=1;i<pts.length;i++){ const d=Math.hypot(pts[i].x-pts[i-1].x,pts[i].y-pts[i-1].y); segs.push(d); total+=d; }
+  total=Math.max(total,1);
+  for(let i=1;i<pts.length;i++){
+    const a=pts[i-1], b=pts[i], seg=segs[i-1];
+    const steps=Math.max(2,Math.min(80,Math.round(seg/8)));
+    for(let s=1;s<=steps;s++){
+      const t=s/steps, x=a.x+(b.x-a.x)*t, y=a.y+(b.y-a.y)*t;
+      await chrome.debugger.sendCommand({tabId},"Input.dispatchMouseEvent",{type:"mouseMoved",x,y,button:press?button:"none",buttons:press?buttons:0});
+      await sleep(Math.max(1,Math.round(duration*(seg/total)/steps)));
+    }
+  }
+  const end=pts[pts.length-1];
+  if(press&&release) await chrome.debugger.sendCommand({tabId},"Input.dispatchMouseEvent",{type:"mouseReleased",x:end.x,y:end.y,button,buttons:0,clickCount:1});
+  await runInTab(tabId,visualCursor,[end.x,end.y,false]).catch(()=>{});
+  return {ok:true,points:pts.length,durationMs:duration,pressed:press,released:release};
+}
+
 function dragDrop(fromX,fromY,toX,toY){
   const src=document.elementFromPoint(Number(fromX),Number(fromY)), dst=document.elementFromPoint(Number(toX),Number(toY));
   if(!src||!dst) throw new Error("Drag source/target not found");
@@ -468,7 +499,7 @@ function selectTarget(selector,value) { const el=document.querySelector(selector
 async function executeCommand(command,args={}){
   const tab=async()=>await targetTab(args);
   switch(command){
-    case "bridge_info": { const t=await activeTab().catch(()=>null); return {extensionVersion:EXT_VERSION,connected:ws?.readyState===WebSocket.OPEN,activeTabId:t?.id||null,cdpAttached:[...cdpAttached],capabilities:["tabId","live_dom","dom_diff","deep_dom","shadow_dom","same_origin_iframes","element_map","viewport","wait_for","mouse_advanced","smooth_cursor","freehand_draw","keyboard_combo","drag_drop","zoom","parallel_actions","cdp","screenshots","forms","click_fallback"]}; }
+    case "bridge_info": { const t=await activeTab().catch(()=>null); return {extensionVersion:EXT_VERSION,connected:ws?.readyState===WebSocket.OPEN,activeTabId:t?.id||null,cdpAttached:[...cdpAttached],capabilities:["tabId","live_dom","dom_diff","deep_dom","shadow_dom","same_origin_iframes","element_map","viewport","wait_for","mouse_advanced","smooth_cursor","freehand_draw","native_mouse_path","keyboard_combo","drag_drop","zoom","parallel_actions","cdp","screenshots","forms","click_fallback"]}; }
     case "get_page": { const t=await tab(); const result=await runInTab(t.id,pageSnapshot,[Math.min(Math.max(Number(args.maxChars||30000),1000),100000)]); return {tabId:t.id,...result}; }
     case "get_viewport": { const t=await tab(); return {tabId:t.id,...await runInTab(t.id,viewportInfo,[])}; }
     case "element_map": { const t=await tab(); return {tabId:t.id,elements:await runInTab(t.id,elementMap,[])}; }
@@ -482,6 +513,7 @@ async function executeCommand(command,args={}){
     case "click_at": { const t=await tab(); return await runInTab(t.id,pointTarget,[args.x,args.y,true]); }
     case "mouse_action": { const t=await tab(); return await runInTab(t.id,mouseAction,[args.kind,args.x,args.y,args.button||"left"]); }
     case "draw_path": { const t=await tab(); return await runInTab(t.id,drawPath,[args.points||[],args.options||{}]); }
+    case "native_mouse_path": { const t=await tab(); return await nativeMousePath(t.id,args.points||[],args.options||{}); }
     case "clear_drawings": { const t=await tab(); return await runInTab(t.id,clearDrawings,[]); }
     case "drag_drop": { const t=await tab(); return await runInTab(t.id,dragDrop,[args.fromX,args.fromY,args.toX,args.toY]); }
     case "inspect_form": { const t=await tab(); return await runInTab(t.id,inspectForm,[]); }
