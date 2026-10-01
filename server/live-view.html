@@ -40,7 +40,9 @@
       let latest = null;
       let monitor = null;
       let timer = null;
-      let inFlight = false;
+      let stream = null;
+      let pendingFrameInfo = null;
+      let lastObjectUrl = null;
       let lastFrameAt = 0;
       let measuredFps = 0;
       const screen = document.getElementById('screen');
@@ -101,10 +103,44 @@
         const secondary = monitors.find(m => !m.primary);
         monitor = monitors.some(m => m.index === previous) && select.options.length ? previous : secondary ? secondary.index : monitors[0].index;
         select.value = String(monitor);
-        status.textContent = 'مباشر';
-        schedule(0);
+        status.textContent = 'جارٍ فتح البث المباشر…';
+        connectStream(result.streamUrl);
       }
-      function schedule(delay) { clearTimeout(timer); if (active) timer = setTimeout(poll, delay); }
+      function schedule(delay) { clearTimeout(timer); if (active) timer = setTimeout(refreshConnection, delay); }
+      function closeStream() {
+        if (stream) { stream.onclose = null; stream.close(); stream = null; }
+      }
+      function connectStream(url) {
+        if (!active || !url) { schedule(1000); return; }
+        closeStream();
+        stream = new WebSocket(url);
+        stream.binaryType = 'arraybuffer';
+        stream.onopen = () => stream.send(JSON.stringify({ type: 'select', screen: monitor }));
+        stream.onmessage = event => {
+          if (typeof event.data === 'string') {
+            try {
+              const data = JSON.parse(event.data);
+              if (data.type === 'frame') pendingFrameInfo = data;
+              else if (data.type === 'error') { status.textContent = 'خطأ في البث'; message.textContent = data.message; }
+            } catch {}
+            return;
+          }
+          if (!pendingFrameInfo || pendingFrameInfo.screen !== monitor) return;
+          const objectUrl = URL.createObjectURL(new Blob([event.data], { type: 'image/webp' }));
+          frame.onload = () => { if (lastObjectUrl) URL.revokeObjectURL(lastObjectUrl); lastObjectUrl = objectUrl; };
+          frame.src = objectUrl;
+          screen.classList.add('ready');
+          const now = performance.now();
+          if (lastFrameAt) {
+            const sample = 1000 / Math.max(1, now - lastFrameAt);
+            measuredFps = measuredFps ? measuredFps * 0.75 + sample * 0.25 : sample;
+          }
+          lastFrameAt = now;
+          status.textContent = `WebSocket مباشر · ${measuredFps ? measuredFps.toFixed(1) : '…'} FPS · ${pendingFrameInfo.latencyMs} ms`;
+        };
+        stream.onerror = () => { status.textContent = 'تعذر فتح قناة البث'; };
+        stream.onclose = () => { stream = null; if (active) { latest = null; schedule(1000); } };
+      }
       async function refreshConnection() {
         try {
           const result = await rpc('tools/call', { name: 'live_view_state', arguments: {} });
@@ -116,42 +152,25 @@
           schedule(3000);
         }
       }
-      async function poll() {
-        if (!active || inFlight || document.hidden) { schedule(1000); return; }
-        if (!latest?.connected) { await refreshConnection(); return; }
-        inFlight = true;
-        const started = performance.now();
-        try {
-          const result = await rpc('tools/call', { name: 'live_view_frame', arguments: { screen: monitor } });
-          const data = unwrap(result)?.frame || result?._meta?.frame;
-          if (!data?.dataUrl || data.screen !== monitor) throw new Error('لم تصل الصورة إلى اللوحة');
-          frame.src = data.dataUrl;
-          screen.classList.add('ready');
-          const now = performance.now();
-          if (lastFrameAt) {
-            const sample = 1000 / Math.max(1, now - lastFrameAt);
-            measuredFps = measuredFps ? measuredFps * 0.7 + sample * 0.3 : sample;
-          }
-          lastFrameAt = now;
-          status.textContent = `مباشر · ${measuredFps ? measuredFps.toFixed(1) : '…'} FPS · ${Math.round(now - started)} ms`;
-        } catch (error) {
-          status.textContent = 'انقطع العرض — إعادة المحاولة';
-          message.textContent = error.message;
-          if (/offline|disconnected|not connected/i.test(error.message)) latest = null;
-        } finally { inFlight = false; schedule(33); }
-      }
       select.addEventListener('change', () => {
         monitor = Number(select.value); screen.classList.remove('ready');
         lastFrameAt = 0; measuredFps = 0;
-        message.textContent = 'جارٍ تبديل الشاشة…'; schedule(0);
+        message.textContent = 'جارٍ تبديل الشاشة…';
+        if (stream?.readyState === WebSocket.OPEN) stream.send(JSON.stringify({ type: 'select', screen: monitor }));
       });
       toggle.addEventListener('click', () => {
         active = !active; toggle.textContent = active ? 'إيقاف مؤقت' : 'متابعة';
         lastFrameAt = 0; measuredFps = 0;
         status.textContent = active ? 'جارٍ الاستئناف…' : 'متوقف مؤقتًا';
-        if (active) schedule(0); else clearTimeout(timer);
+        if (active) {
+          if (stream?.readyState === WebSocket.OPEN) stream.send(JSON.stringify({ type: 'resume' }));
+          else refreshConnection();
+        } else {
+          clearTimeout(timer);
+          if (stream?.readyState === WebSocket.OPEN) stream.send(JSON.stringify({ type: 'pause' }));
+        }
       });
-      window.addEventListener('pagehide', () => { active = false; clearTimeout(timer); });
+      window.addEventListener('pagehide', () => { active = false; clearTimeout(timer); closeStream(); if (lastObjectUrl) URL.revokeObjectURL(lastObjectUrl); });
       configure(window.openai?.toolOutput || window.openai?.toolResponseMetadata || embeddedState);
       if (!latest?.connected) refreshConnection();
     })();
