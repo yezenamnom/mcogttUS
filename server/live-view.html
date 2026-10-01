@@ -33,6 +33,7 @@
   <footer>خاص بحسابك عبر موصل GPT US. تُطلب اللقطات أثناء فتح هذه اللوحة فقط؛ لا تُنشر على رابط عام. يمكنك كتابة أوامر التحكم في محادثة ChatGPT.</footer>
   <script>
     (() => {
+      const embeddedState = __GPT_US_BOOTSTRAP_STATE__;
       const pending = new Map();
       let requestId = 1;
       let active = true;
@@ -151,7 +152,7 @@
         if (active) schedule(0); else clearTimeout(timer);
       });
       window.addEventListener('pagehide', () => { active = false; clearTimeout(timer); });
-      configure(window.openai?.toolOutput || window.openai?.toolResponseMetadata);
+      configure(window.openai?.toolOutput || window.openai?.toolResponseMetadata || embeddedState);
       if (!latest?.connected) refreshConnection();
     })();
   </script>
