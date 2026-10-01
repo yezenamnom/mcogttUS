@@ -1,7 +1,7 @@
 let ws = null;
 let reconnectTimer = null;
 let pingTimer = null;
-const EXT_VERSION = "0.9.3";
+const EXT_VERSION = "0.9.4";
 const domState = new Map();
 const cdpAttached = new Set();
 const networkState = new Map();
@@ -627,6 +627,23 @@ async function executeCommand(command,args={}){
         page:await runInTab(t.id,pageSnapshot,[10000]),elements:await runInTab(t.id,elementMap,[]),staleAfterNavigation:true};
       await chrome.storage.local.set({workspaceReport:report});
       return report;
+    }
+    case "smart_actions_save": {
+      const options=Array.isArray(args.options)?args.options:[];
+      if(options.length>9||options.some(item=>!Number.isInteger(item.number)||item.number<0||item.number>9||typeof item.label!=="string"||item.label.length>100||typeof item.prompt!=="string"||item.prompt.length>320))throw new Error("Invalid smart actions");
+      const previous=(await chrome.storage.local.get("smartActions")).smartActions||{};
+      const smartActions={schemaVersion:1,observedAt:new Date().toISOString(),options:options.map(item=>({number:item.number,label:item.label,prompt:item.prompt,source:item.source||"browser"})),usage:previous.usage||{}};
+      await chrome.storage.local.set({smartActions});
+      return {saved:true,count:smartActions.options.length};
+    }
+    case "smart_actions_read": return {found:true,state:(await chrome.storage.local.get("smartActions")).smartActions||null};
+    case "smart_actions_choose": {
+      const stored=(await chrome.storage.local.get("smartActions")).smartActions;
+      const number=Number(args.number);const option=stored?.options?.find(item=>item.number===number);
+      if(!option)throw new Error("Numbered option unavailable");
+      const key=option.label.toLocaleLowerCase();stored.usage[key]=Math.min(10000,(stored.usage[key]||0)+1);
+      await chrome.storage.local.set({smartActions:stored});
+      return {selected:true,number,label:option.label,prompt:option.prompt};
     }
     case "bridge_info": { const t=await activeTab().catch(()=>null); return {extensionVersion:EXT_VERSION,connected:ws?.readyState===WebSocket.OPEN,activeTabId:t?.id||null,cdpAttached:[...cdpAttached],capabilities:["tabId","live_dom","dom_diff","deep_dom","shadow_dom","same_origin_iframes","element_map","viewport","wait_for","mouse_advanced","smooth_cursor","freehand_draw","native_mouse_path","keyboard_combo","drag_drop","zoom","parallel_actions","cdp","screenshots","forms","click_fallback"]}; }
     case "get_page": { const t=await tab(); const result=await runInTab(t.id,pageSnapshot,[Math.min(Math.max(Number(args.maxChars||30000),1000),100000)]); return {tabId:t.id,...result}; }
