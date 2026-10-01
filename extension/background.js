@@ -1,9 +1,21 @@
 let ws = null;
 let reconnectTimer = null;
 let pingTimer = null;
-const EXT_VERSION = "0.8.0";
+const EXT_VERSION = "0.8.1";
 const domState = new Map();
 const cdpAttached = new Set();
+const networkState = new Map();
+
+function getNetworkState(tabId){
+  if(!networkState.has(tabId)) networkState.set(tabId,{order:[],byId:new Map()});
+  return networkState.get(tabId);
+}
+function trimNetworkState(state,max=500){
+  while(state.order.length>max){
+    const id=state.order.shift();
+    state.byId.delete(id);
+  }
+}
 
 async function getConfig() {
   const cfg = await chrome.storage.local.get(["bridgeUrl", "bridgeToken"]);
@@ -82,6 +94,59 @@ async function cdp(tabId,method,params={}){
   return await chrome.debugger.sendCommand({tabId},method,params);
 }
 chrome.debugger.onDetach.addListener(source=>{ if(source.tabId) cdpAttached.delete(source.tabId); });
+chrome.debugger.onEvent.addListener((source,method,params)=>{
+  const tabId=source?.tabId;
+  if(!tabId || !method?.startsWith("Network.")) return;
+  const state=getNetworkState(tabId);
+  const id=params?.requestId;
+  if(!id) return;
+  let row=state.byId.get(id);
+  if(method==="Network.requestWillBeSent"){
+    row={
+      requestId:id,
+      url:params.request?.url||"",
+      method:params.request?.method||"",
+      type:params.type||"",
+      startTime:params.timestamp||0,
+      initiatorType:params.initiator?.type||"",
+      status:null,
+      mimeType:null,
+      protocol:null,
+      fromDiskCache:false,
+      fromServiceWorker:false,
+      encodedDataLength:0,
+      durationMs:null,
+      failed:false,
+      errorText:null
+    };
+    state.byId.set(id,row);
+    state.order.push(id);
+    trimNetworkState(state);
+    return;
+  }
+  if(!row) return;
+  if(method==="Network.responseReceived"){
+    row.status=params.response?.status??null;
+    row.statusText=params.response?.statusText||"";
+    row.mimeType=params.response?.mimeType||null;
+    row.protocol=params.response?.protocol||null;
+    row.fromDiskCache=!!params.response?.fromDiskCache;
+    row.fromServiceWorker=!!params.response?.fromServiceWorker;
+    row.remoteIPAddress=params.response?.remoteIPAddress||null;
+    row.responseTime=params.timestamp||null;
+  } else if(method==="Network.loadingFinished"){
+    row.encodedDataLength=params.encodedDataLength||0;
+    row.endTime=params.timestamp||null;
+    if(row.startTime && row.endTime) row.durationMs=Math.max(0,Math.round((row.endTime-row.startTime)*1000));
+  } else if(method==="Network.loadingFailed"){
+    row.failed=true;
+    row.errorText=params.errorText||"";
+    row.canceled=!!params.canceled;
+    row.blockedReason=params.blockedReason||null;
+    row.endTime=params.timestamp||null;
+    if(row.startTime && row.endTime) row.durationMs=Math.max(0,Math.round((row.endTime-row.startTime)*1000));
+  }
+});
 function bootstrapPageHelpers() {
   // Functions passed to chrome.scripting.executeScript do not retain the
   // background service worker's lexical scope. Publish the shared helpers
@@ -538,6 +603,17 @@ async function executeCommand(command,args={}){
     case "cdp_attach": { const t=await tab(); await ensureCdp(t.id); await chrome.debugger.sendCommand({tabId:t.id},"Page.enable"); await chrome.debugger.sendCommand({tabId:t.id},"DOM.enable"); await chrome.debugger.sendCommand({tabId:t.id},"Network.enable"); return {attached:true,tabId:t.id}; }
     case "cdp_detach": { const t=await tab(); if(cdpAttached.has(t.id)) await chrome.debugger.detach({tabId:t.id}); cdpAttached.delete(t.id); return {detached:true,tabId:t.id}; }
     case "cdp_status": { const t=await tab(); const targets=await chrome.debugger.getTargets(); const info=targets.find(x=>x.tabId===t.id); return {tabId:t.id,attached:!!info?.attached,title:info?.title,url:info?.url}; }
+    case "network_logs": {
+      const t=await tab();
+      await ensureCdp(t.id);
+      await chrome.debugger.sendCommand({tabId:t.id},"Network.enable");
+      const state=getNetworkState(t.id);
+      const limit=Math.max(1,Math.min(200,Number(args.limit||50)));
+      const requests=state.order.slice(-limit).map(id=>state.byId.get(id)).filter(Boolean);
+      const result={tabId:t.id,title:t.title,url:t.url,count:requests.length,requests};
+      if(args.clear===true){ state.order=[]; state.byId.clear(); }
+      return result;
+    }
     case "cdp_command": { const t=await tab(); const method=String(args.method||""); const allowed=/^(Page\.(enable|getLayoutMetrics|captureScreenshot)|DOM\.(enable|getDocument|getOuterHTML)|DOMSnapshot\.captureSnapshot|Network\.(enable|getResponseBody)|Performance\.(enable|getMetrics)|Runtime\.getIsolateId|Input\.(dispatchMouseEvent|dispatchKeyEvent))$/.test(method); if(!allowed) throw new Error("CDP method not allowed by bridge safety policy"); return {tabId:t.id,method,result:await cdp(t.id,method,args.params||{})}; }
     default: throw new Error(`Unknown command: ${command}`);
   }
