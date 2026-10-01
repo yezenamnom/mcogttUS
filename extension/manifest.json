@@ -1,15 +1,11 @@
 {
   "manifest_version": 3,
   "name": "Comet ChatGPT Bridge",
-  "version": "0.1.0",
-  "description": "Local bridge that lets an authorized MCP server inspect and control Comet tabs.",
+  "version": "0.2.0",
+  "description": "Secure bridge between Comet tabs and an authorized remote MCP server.",
   "permissions": ["tabs", "scripting", "storage"],
-  "host_permissions": ["<all_urls>", "http://127.0.0.1/*", "http://localhost/*"],
-  "background": {
-    "service_worker": "background.js",
-    "type": "module"
-  },
-  "action": {
-    "default_title": "Comet ChatGPT Bridge"
-  }
+  "host_permissions": ["<all_urls>"],
+  "background": { "service_worker": "background.js", "type": "module" },
+  "options_page": "options.html",
+  "action": { "default_title": "Comet ChatGPT Bridge" }
 }
