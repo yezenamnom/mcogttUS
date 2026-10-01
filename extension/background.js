@@ -106,7 +106,7 @@ function bootstrapPageHelpers() {
   if(!Number.isFinite(x)||!Number.isFinite(y)) return false;
 
   let host=document.getElementById("__cgb_cursor_host");
-  if(host && host.dataset.cgbCursorVersion!=="4"){
+  if(host && (host.dataset.cgbCursorVersion!=="5" || !host.isConnected)){
     try{ host.remove(); }catch{}
     host=null;
   }
@@ -114,7 +114,7 @@ function bootstrapPageHelpers() {
   if(!host){
     host=document.createElement("div");
     host.id="__cgb_cursor_host";
-    host.dataset.cgbCursorVersion="4";
+    host.dataset.cgbCursorVersion="5";
     host.setAttribute("aria-hidden","true");
     const s=host.style;
     s.setProperty("all","initial","important");
@@ -127,8 +127,8 @@ function bootstrapPageHelpers() {
     s.setProperty("overflow","visible","important");
     s.setProperty("pointer-events","none","important");
     s.setProperty("z-index","2147483647","important");
-    s.setProperty("transition","left .13s cubic-bezier(.2,.8,.2,1), top .13s cubic-bezier(.2,.8,.2,1)","important");
-    s.setProperty("will-change","left,top","important");
+    s.setProperty("transition","transform .13s cubic-bezier(.2,.8,.2,1)","important");
+    s.setProperty("will-change","transform","important");
 
     const svg=document.createElementNS("http://www.w3.org/2000/svg","svg");
     svg.setAttribute("viewBox","0 0 28 34");
@@ -185,8 +185,11 @@ function bootstrapPageHelpers() {
     }catch{}
   }
 
-  host.style.setProperty("left",x+"px","important");
-  host.style.setProperty("top",y+"px","important");
+  host.style.setProperty("left","0px","important");
+  host.style.setProperty("top","0px","important");
+  host.style.setProperty("visibility","visible","important");
+  host.style.setProperty("opacity","1","important");
+  host.style.setProperty("transform",`translate3d(${x}px,${y}px,0)`,"important");
 
   if(click){
     const ring=document.createElement("div");
@@ -302,7 +305,7 @@ function visualCursor(x,y,click=false) {
   if(!Number.isFinite(x)||!Number.isFinite(y)) return false;
 
   let host=document.getElementById("__cgb_cursor_host");
-  if(host && host.dataset.cgbCursorVersion!=="4"){
+  if(host && (host.dataset.cgbCursorVersion!=="5" || !host.isConnected)){
     try{ host.remove(); }catch{}
     host=null;
   }
@@ -310,7 +313,7 @@ function visualCursor(x,y,click=false) {
   if(!host){
     host=document.createElement("div");
     host.id="__cgb_cursor_host";
-    host.dataset.cgbCursorVersion="4";
+    host.dataset.cgbCursorVersion="5";
     host.setAttribute("aria-hidden","true");
     const s=host.style;
     s.setProperty("all","initial","important");
@@ -323,8 +326,8 @@ function visualCursor(x,y,click=false) {
     s.setProperty("overflow","visible","important");
     s.setProperty("pointer-events","none","important");
     s.setProperty("z-index","2147483647","important");
-    s.setProperty("transition","left .13s cubic-bezier(.2,.8,.2,1), top .13s cubic-bezier(.2,.8,.2,1)","important");
-    s.setProperty("will-change","left,top","important");
+    s.setProperty("transition","transform .13s cubic-bezier(.2,.8,.2,1)","important");
+    s.setProperty("will-change","transform","important");
 
     const svg=document.createElementNS("http://www.w3.org/2000/svg","svg");
     svg.setAttribute("viewBox","0 0 28 34");
@@ -381,8 +384,11 @@ function visualCursor(x,y,click=false) {
     }catch{}
   }
 
-  host.style.setProperty("left",x+"px","important");
-  host.style.setProperty("top",y+"px","important");
+  host.style.setProperty("left","0px","important");
+  host.style.setProperty("top","0px","important");
+  host.style.setProperty("visibility","visible","important");
+  host.style.setProperty("opacity","1","important");
+  host.style.setProperty("transform",`translate3d(${x}px,${y}px,0)`,"important");
 
   if(click){
     const ring=document.createElement("div");
@@ -420,7 +426,16 @@ function pointTarget(x,y,clickIt) {
   x=Number(x); y=Number(y);
   if(!Number.isFinite(x)||!Number.isFinite(y)) throw new Error("x/y must be numbers");
   visualCursor(x,y,!!clickIt);
-  const el=document.elementFromPoint(x,y);
+  let el=document.elementFromPoint(x,y);
+  if(!el){
+    try{
+      const candidates=[...document.querySelectorAll("button,a,input,select,textarea,[role='button'],[onclick],[tabindex]")];
+      el=candidates.find(node=>{
+        const r=node.getBoundingClientRect();
+        return r.width>0 && r.height>0 && x>=r.left && x<=r.right && y>=r.top && y<=r.bottom;
+      })||null;
+    }catch{}
+  }
   if(!el) return {moved:true,clicked:false,x,y,visualCursor:true,targetFound:false};
   const init={bubbles:true,cancelable:true,clientX:x,clientY:y,view:window,button:0,pointerType:"mouse"};
   el.dispatchEvent(new PointerEvent("pointermove",init)); el.dispatchEvent(new MouseEvent("mousemove",init)); el.dispatchEvent(new MouseEvent("mouseover",init));
