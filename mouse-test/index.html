@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mouse Precision Test 1–500</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <div><h1>Mouse Precision Test</h1><p>500 compact targets for browser-control click accuracy.</p></div>
+  <div class="controls">
+    <input id="sequence" value="17,238,401,499" aria-label="Target sequence">
+    <button id="start">Start</button><button id="reset">Reset</button>
+  </div>
+</header>
+<section class="stats">
+  <div>Next <b id="next">—</b></div><div>Hits <b id="hits">0</b></div>
+  <div>Misses <b id="misses">0</b></div><div>Avg error <b id="avg">0.0 px</b></div>
+  <p id="status">Enter target numbers and press Start.</p>
+</section>
+<main id="board"></main>
+<script src="app.js"></script>
+</body>
+</html>
