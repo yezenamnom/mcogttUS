@@ -80,7 +80,7 @@ function callBrowser(command, args = {}, timeoutMs = 20000) {
 }
 
 function createMcpServer() {
-  const server = new McpServer({ name: "comet-browser", version: "0.2.0" });
+  const server = new McpServer({ name: "comet-browser", version: "0.2.1" });
 
   server.tool("get_page", "Read the active Comet tab: title, URL, visible text, and interactive elements.",
     { maxChars: z.number().int().min(1000).max(100000).optional() },
@@ -111,11 +111,11 @@ function createMcpServer() {
   return server;
 }
 
-app.get("/", (_req, res) => res.json({ service: "comet-chatgpt-bridge", version: "0.2.0", status: "ok" }));
+app.get("/", (_req, res) => res.json({ service: "comet-chatgpt-bridge", version: "0.2.1", status: "ok" }));
 app.get("/health", (_req, res) => res.status(200).json({
   ok: true,
   service: "comet-chatgpt-bridge",
-  version: "0.2.0",
+  version: "0.2.1",
   browserConnected: !!browserSocket && browserSocket.readyState === WebSocket.OPEN,
   browserConnectedAt,
   uptimeSeconds: Math.round(process.uptime())
@@ -141,6 +141,6 @@ app.all("/mcp", async (req, res) => {
 });
 
 httpServer.listen(PORT, "0.0.0.0", () => {
-  console.log(`Comet ChatGPT Bridge v0.2 listening on 0.0.0.0:${PORT}`);
+  console.log(`Comet ChatGPT Bridge v0.2.1 listening on 0.0.0.0:${PORT}`);
   console.log("HTTP health: /health | WebSocket: /browser | MCP: /mcp");
 });
