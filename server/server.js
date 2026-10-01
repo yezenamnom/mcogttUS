@@ -30,7 +30,7 @@ function callBrowser(command, args = {}, timeoutMs = 20000) {
 }
 
 function makeMcpServer() {
-  const server = new McpServer({ name: "comet-browser", version: "0.4.0" });
+  const server = new McpServer({ name: "comet-browser", version: "0.5.0" });
 
   server.registerTool("get_page", {
     description: "Read the active Comet tab: title, URL, visible text, and interactive elements.",
@@ -55,7 +55,42 @@ function makeMcpServer() {
   server.registerTool("screenshot", {
     description: "Capture a PNG screenshot of the visible area of the active Comet tab.",
     inputSchema: z.object({})
-  }, async () => ({ content: [{ type: "text", text: JSON.stringify(await callBrowser("screenshot"), null, 2) }] }));
+  }, async () => {
+    const shot = await callBrowser("screenshot");
+    const match = /^data:(image\/png);base64,(.+)$/.exec(shot?.dataUrl || "");
+    if (!match) throw new Error("Browser did not return a valid PNG screenshot");
+    return { content: [{ type: "image", data: match[2], mimeType: match[1] }] };
+  });
+
+  server.registerTool("move_mouse", {
+    description: "Move the visible virtual cursor to viewport coordinates without clicking.",
+    inputSchema: z.object({ x: z.number(), y: z.number() })
+  }, async args => ({ content: [{ type: "text", text: JSON.stringify(await callBrowser("move_mouse", args), null, 2) }] }));
+
+  server.registerTool("click_at", {
+    description: "Click the element at viewport x/y coordinates. Useful after inspecting a screenshot.",
+    inputSchema: z.object({ x: z.number(), y: z.number() })
+  }, async args => ({ content: [{ type: "text", text: JSON.stringify(await callBrowser("click_at", args), null, 2) }] }));
+
+  server.registerTool("inspect_form", {
+    description: "Inspect editable fields on the active page, including labels, names, types, options and positions.",
+    inputSchema: z.object({})
+  }, async () => ({ content: [{ type: "text", text: JSON.stringify(await callBrowser("inspect_form"), null, 2) }] }));
+
+  server.registerTool("fill_form", {
+    description: "Fill many form fields in one fast browser round-trip.",
+    inputSchema: z.object({ fields: z.array(z.object({ selector:z.string().optional(), name:z.string().optional(), id:z.string().optional(), index:z.number().int().optional(), value:z.union([z.string(),z.number(),z.boolean()]) })).min(1).max(200) })
+  }, async args => ({ content: [{ type: "text", text: JSON.stringify(await callBrowser("fill_form", args), null, 2) }] }));
+
+  server.registerTool("press_key", {
+    description: "Send a keyboard key to the active element or a CSS-selected element.",
+    inputSchema: z.object({ key:z.string().min(1), selector:z.string().optional() })
+  }, async args => ({ content: [{ type: "text", text: JSON.stringify(await callBrowser("press_key", args), null, 2) }] }));
+
+  server.registerTool("batch_actions", {
+    description: "Execute multiple browser commands sequentially in one MCP call for lower latency.",
+    inputSchema: z.object({ actions:z.array(z.object({ command:z.string(), args:z.record(z.string(),z.any()).optional() })).min(1).max(50) })
+  }, async args => ({ content: [{ type: "text", text: JSON.stringify(await callBrowser("batch_actions", args, 60000), null, 2) }] }));
 
   server.registerTool("list_tabs", {
     description: "List tabs in the current Comet window.",
@@ -102,7 +137,7 @@ const httpServer = http.createServer((req, res) => {
     res.end(JSON.stringify({
       ok: true,
       service: "comet-chatgpt-bridge",
-      version: "0.4.0",
+      version: "0.5.0",
       mcp: "ready",
       browserConnected: !!browserSocket && browserSocket.readyState === WebSocket.OPEN,
       browserConnectedAt,
@@ -113,7 +148,7 @@ const httpServer = http.createServer((req, res) => {
 
   if (url.pathname === "/" && req.method === "GET") {
     res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({ service: "comet-chatgpt-bridge", version: "0.4.0", status: "ok", mcp: "/mcp" }));
+    res.end(JSON.stringify({ service: "comet-chatgpt-bridge", version: "0.5.0", status: "ok", mcp: "/mcp" }));
     return;
   }
 
@@ -165,7 +200,7 @@ wss.on("connection", socket => {
 });
 
 httpServer.listen(PORT, "0.0.0.0", () => {
-  console.log(`Comet ChatGPT Bridge v0.4.0 listening on 0.0.0.0:${PORT}`);
+  console.log(`Comet ChatGPT Bridge v0.5.0 listening on 0.0.0.0:${PORT}`);
   console.log("MCP v2 handler ready at /mcp | WSS /browser | health /health");
 });
 
