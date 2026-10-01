@@ -101,7 +101,7 @@ function bootstrapPageHelpers() {
     walk(document); return [...new Set(out)];
   };
 
-  globalThis.visualCursor = async function(x,y,click=false) {
+  globalThis.visualCursor = async function(x,y,click=false,cfg={}) {
   x=Number(x); y=Number(y);
   if(!Number.isFinite(x)||!Number.isFinite(y)) return false;
   let host=document.getElementById("__cgb_cursor_host");
@@ -117,12 +117,12 @@ function bootstrapPageHelpers() {
     s.setProperty("display","block","important");
     s.setProperty("position","fixed","important");
     s.setProperty("left","0","important"); s.setProperty("top","0","important");
-    s.setProperty("width","30px","important"); s.setProperty("height","30px","important");
+    const cs0=Math.max(18,Math.min(52,Number(cfg.size||30))); s.setProperty("width",cs0+"px","important"); s.setProperty("height",cs0+"px","important");
     s.setProperty("overflow","visible","important"); s.setProperty("pointer-events","none","important");
     s.setProperty("z-index","2147483647","important"); s.setProperty("will-change","transform","important");
     s.setProperty("transform","translate3d("+x+"px,"+y+"px,0)","important");
     const svg=document.createElementNS("http://www.w3.org/2000/svg","svg");
-    svg.setAttribute("viewBox","0 0 48 48"); svg.setAttribute("width","30"); svg.setAttribute("height","30");
+    const cs=Math.max(18,Math.min(52,Number(cfg.size||30))); svg.setAttribute("viewBox","0 0 48 48"); svg.setAttribute("width",String(cs)); svg.setAttribute("height",String(cs));
     svg.style.setProperty("display","block","important"); svg.style.setProperty("overflow","visible","important");
     const defs=document.createElementNS("http://www.w3.org/2000/svg","defs");
     const grad=document.createElementNS("http://www.w3.org/2000/svg","linearGradient");
@@ -151,7 +151,7 @@ function bootstrapPageHelpers() {
   const sx=Number(host.dataset.cgbX), sy=Number(host.dataset.cgbY);
   const startX=Number.isFinite(sx)?sx:x, startY=Number.isFinite(sy)?sy:y;
   const dx=x-startX, dy=y-startY, distance=Math.hypot(dx,dy);
-  const duration=Math.max(70,Math.min(280,70+distance*.18)), begin=performance.now();
+  const speed=Math.max(40,Math.min(300,Number(cfg.speed||180))); const duration=Math.max(40,Math.min(speed,40+distance*(speed/1000))), begin=performance.now();
   await new Promise(function(resolve){
     function step(now){
       const t=Math.min(1,(now-begin)/duration);
@@ -167,7 +167,7 @@ function bootstrapPageHelpers() {
   if(click){
     const pulse=document.createElement("div"); pulse.setAttribute("aria-hidden","true");
     const ps=pulse.style; ps.setProperty("position","fixed","important"); ps.setProperty("left",x+"px","important"); ps.setProperty("top",y+"px","important");
-    ps.setProperty("width","9px","important"); ps.setProperty("height","9px","important"); ps.setProperty("border","2px solid #27e9f5","important"); ps.setProperty("border-radius","999px","important");
+    ps.setProperty("width","9px","important"); ps.setProperty("height","9px","important"); ps.setProperty("border","2px solid "+(cfg.clickColor||"#27e9f5"),"important"); ps.setProperty("border-radius","999px","important");
     ps.setProperty("pointer-events","none","important"); ps.setProperty("z-index","2147483646","important"); ps.setProperty("transform","translate(-50%,-50%)","important");
     (document.documentElement||document.body).appendChild(pulse);
     try{ pulse.animate([{transform:"translate(-50%,-50%) scale(.5)",opacity:1},{transform:"translate(-50%,-50%) scale(3.6)",opacity:0}],{duration:360,easing:"ease-out"}).finished.finally(function(){pulse.remove();}); }catch(e){ setTimeout(function(){pulse.remove();},380); }
@@ -251,7 +251,7 @@ function typeTarget(selector,text,clearFirst) {
 }
 
 
-async function visualCursor(x,y,click=false) {
+async function visualCursor(x,y,click=false,cfg={}) {
   x=Number(x); y=Number(y);
   if(!Number.isFinite(x)||!Number.isFinite(y)) return false;
   let host=document.getElementById("__cgb_cursor_host");
@@ -267,12 +267,12 @@ async function visualCursor(x,y,click=false) {
     s.setProperty("display","block","important");
     s.setProperty("position","fixed","important");
     s.setProperty("left","0","important"); s.setProperty("top","0","important");
-    s.setProperty("width","30px","important"); s.setProperty("height","30px","important");
+    const cs0=Math.max(18,Math.min(52,Number(cfg.size||30))); s.setProperty("width",cs0+"px","important"); s.setProperty("height",cs0+"px","important");
     s.setProperty("overflow","visible","important"); s.setProperty("pointer-events","none","important");
     s.setProperty("z-index","2147483647","important"); s.setProperty("will-change","transform","important");
     s.setProperty("transform","translate3d("+x+"px,"+y+"px,0)","important");
     const svg=document.createElementNS("http://www.w3.org/2000/svg","svg");
-    svg.setAttribute("viewBox","0 0 48 48"); svg.setAttribute("width","30"); svg.setAttribute("height","30");
+    const cs=Math.max(18,Math.min(52,Number(cfg.size||30))); svg.setAttribute("viewBox","0 0 48 48"); svg.setAttribute("width",String(cs)); svg.setAttribute("height",String(cs));
     svg.style.setProperty("display","block","important"); svg.style.setProperty("overflow","visible","important");
     const defs=document.createElementNS("http://www.w3.org/2000/svg","defs");
     const grad=document.createElementNS("http://www.w3.org/2000/svg","linearGradient");
@@ -301,7 +301,7 @@ async function visualCursor(x,y,click=false) {
   const sx=Number(host.dataset.cgbX), sy=Number(host.dataset.cgbY);
   const startX=Number.isFinite(sx)?sx:x, startY=Number.isFinite(sy)?sy:y;
   const dx=x-startX, dy=y-startY, distance=Math.hypot(dx,dy);
-  const duration=Math.max(70,Math.min(280,70+distance*.18)), begin=performance.now();
+  const speed=Math.max(40,Math.min(300,Number(cfg.speed||180))); const duration=Math.max(40,Math.min(speed,40+distance*(speed/1000))), begin=performance.now();
   await new Promise(function(resolve){
     function step(now){
       const t=Math.min(1,(now-begin)/duration);
@@ -317,17 +317,17 @@ async function visualCursor(x,y,click=false) {
   if(click){
     const pulse=document.createElement("div"); pulse.setAttribute("aria-hidden","true");
     const ps=pulse.style; ps.setProperty("position","fixed","important"); ps.setProperty("left",x+"px","important"); ps.setProperty("top",y+"px","important");
-    ps.setProperty("width","9px","important"); ps.setProperty("height","9px","important"); ps.setProperty("border","2px solid #27e9f5","important"); ps.setProperty("border-radius","999px","important");
+    ps.setProperty("width","9px","important"); ps.setProperty("height","9px","important"); ps.setProperty("border","2px solid "+(cfg.clickColor||"#27e9f5"),"important"); ps.setProperty("border-radius","999px","important");
     ps.setProperty("pointer-events","none","important"); ps.setProperty("z-index","2147483646","important"); ps.setProperty("transform","translate(-50%,-50%)","important");
     (document.documentElement||document.body).appendChild(pulse);
     try{ pulse.animate([{transform:"translate(-50%,-50%) scale(.5)",opacity:1},{transform:"translate(-50%,-50%) scale(3.6)",opacity:0}],{duration:360,easing:"ease-out"}).finished.finally(function(){pulse.remove();}); }catch(e){ setTimeout(function(){pulse.remove();},380); }
   }
   return true;
 }
-async function pointTarget(x,y,clickIt) {
+async function pointTarget(x,y,clickIt,cfg={}) {
   x=Number(x); y=Number(y);
   if(!Number.isFinite(x)||!Number.isFinite(y)) throw new Error("x/y must be numbers");
-  await visualCursor(x,y,!!clickIt);
+  if(cfg.enabled!==false) await visualCursor(x,y,!!clickIt&&cfg.clickEffect!==false,cfg);
   let el=document.elementFromPoint(x,y);
   if(!el) return {moved:true,clicked:false,x,y,visualCursor:true,targetFound:false};
   const init={bubbles:true,cancelable:true,clientX:x,clientY:y,view:window,button:0,pointerType:"mouse"};
@@ -509,8 +509,8 @@ async function executeCommand(command,args={}){
     case "click": { const t=await tab(); return await runInTab(t.id,clickTarget,[args.selector||null,args.text||null]); }
     case "type": { const t=await tab(); return await runInTab(t.id,typeTarget,[args.selector,String(args.text??""),args.clearFirst!==false]); }
     case "navigate": { const t=await tab(); await chrome.tabs.update(t.id,{url:args.url}); return {navigated:true,tabId:t.id,url:args.url}; }
-    case "move_mouse": { const t=await tab(); return await runInTab(t.id,pointTarget,[args.x,args.y,false]); }
-    case "click_at": { const t=await tab(); return await runInTab(t.id,pointTarget,[args.x,args.y,true]); }
+    case "move_mouse": { const t=await tab(); const s=await chrome.storage.local.get(["cursorSize","cursorSpeed","cursorColor","clickColor","cursorEnabled","clickEffect"]); return await runInTab(t.id,pointTarget,[args.x,args.y,false,{size:s.cursorSize||30,speed:s.cursorSpeed||180,color:s.cursorColor||"#27e9f5",clickColor:s.clickColor||"#27e9f5",enabled:s.cursorEnabled!==false,clickEffect:s.clickEffect!==false}]); }
+    case "click_at": { const t=await tab(); const s=await chrome.storage.local.get(["cursorSize","cursorSpeed","cursorColor","clickColor","cursorEnabled","clickEffect"]); return await runInTab(t.id,pointTarget,[args.x,args.y,true,{size:s.cursorSize||30,speed:s.cursorSpeed||180,color:s.cursorColor||"#27e9f5",clickColor:s.clickColor||"#27e9f5",enabled:s.cursorEnabled!==false,clickEffect:s.clickEffect!==false}]); }
     case "mouse_action": { const t=await tab(); return await runInTab(t.id,mouseAction,[args.kind,args.x,args.y,args.button||"left"]); }
     case "draw_path": { const t=await tab(); return await runInTab(t.id,drawPath,[args.points||[],args.options||{}]); }
     case "native_mouse_path": { const t=await tab(); return await nativeMousePath(t.id,args.points||[],args.options||{}); }
