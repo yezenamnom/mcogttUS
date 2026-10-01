@@ -42,7 +42,6 @@
       let timer = null;
       let stream = null;
       let pendingFrameInfo = null;
-      let lastObjectUrl = null;
       let lastFrameAt = 0;
       let measuredFps = 0;
       const screen = document.getElementById('screen');
@@ -126,9 +125,9 @@
             return;
           }
           if (!pendingFrameInfo || pendingFrameInfo.screen !== monitor) return;
-          const objectUrl = URL.createObjectURL(new Blob([event.data], { type: 'image/webp' }));
-          frame.onload = () => { if (lastObjectUrl) URL.revokeObjectURL(lastObjectUrl); lastObjectUrl = objectUrl; };
-          frame.src = objectUrl;
+          const reader = new FileReader();
+          reader.onload = () => { frame.src = reader.result; };
+          reader.readAsDataURL(new Blob([event.data], { type: 'image/webp' }));
           screen.classList.add('ready');
           const now = performance.now();
           if (lastFrameAt) {
@@ -170,7 +169,7 @@
           if (stream?.readyState === WebSocket.OPEN) stream.send(JSON.stringify({ type: 'pause' }));
         }
       });
-      window.addEventListener('pagehide', () => { active = false; clearTimeout(timer); closeStream(); if (lastObjectUrl) URL.revokeObjectURL(lastObjectUrl); });
+      window.addEventListener('pagehide', () => { active = false; clearTimeout(timer); closeStream(); });
       configure(window.openai?.toolOutput || window.openai?.toolResponseMetadata || embeddedState);
       if (!latest?.connected) refreshConnection();
     })();
