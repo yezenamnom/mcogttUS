@@ -7,6 +7,8 @@ internal static partial class Program
  {
   if(S(a,"kind")=="report")return WorkspaceReport();
   if(S(a,"kind")=="save_report")return SaveBrowserReport(a);
+  if(S(a,"kind")=="report_latest")return ReadLatestReport(a);
+  if(S(a,"kind")=="run_command")return await RunCommand(a);
   var kind=S(a,"kind","click");
   if(kind is not ("move" or "click" or "double" or "right" or "drag" or "scroll"))
    throw new ArgumentException("Unknown mouse action");

@@ -13,6 +13,7 @@
     "filesRead": true,
     "filesWrite": false,
     "processes": true,
-    "system": true
+    "system": true,
+    "commands": false
   }
 }

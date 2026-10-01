@@ -40,12 +40,19 @@ test('owner OAuth: discovery, manual consent, PKCE, replay, expiry and restart',
   const exchange={grant_type:'authorization_code',code:callback.searchParams.get('code'),client_id:client.client_id,redirect_uri:redirect,resource:issuer+'/mcp',code_verifier:verifier};
   const token=await (await call('/oauth/token',exchange)).json();
   assert.equal(token.token_type,'Bearer');
+  assert.ok(token.refresh_token);
   assert.ok(oauth.accepts('Bearer '+token.access_token));
   assert.equal((await call('/oauth/token',exchange)).status,400);
   assert.equal(oauth.accepts('Bearer '+token.access_token+'tampered'),false);
   assert.equal(createOwnerOAuth({secret,issuer:issuer+'/other'}).accepts('Bearer '+token.access_token),false);
   clock+=3600001;
   assert.equal(oauth.accepts('Bearer '+token.access_token),false);
+  assert.equal((await call('/oauth/token',{grant_type:'refresh_token',refresh_token:token.refresh_token,client_id:'wrong',resource:issuer+'/mcp'})).status,400);
+  oauth=createOwnerOAuth({secret,issuer,now:()=>clock});
+  const renewed=await (await call('/oauth/token',{grant_type:'refresh_token',refresh_token:token.refresh_token,client_id:client.client_id,resource:issuer+'/mcp'})).json();
+  assert.ok(oauth.accepts('Bearer '+renewed.access_token));
+  clock+=30*24*3600000;
+  assert.equal((await call('/oauth/token',{grant_type:'refresh_token',refresh_token:token.refresh_token,client_id:client.client_id,resource:issuer+'/mcp'})).status,400);
   assert.ok(oauth.accepts('Bearer '+secret));
  }finally{await new Promise(resolve=>server.close(resolve));}
 });

@@ -48,7 +48,7 @@ export function createOwnerOAuth({secret,issuer,now=()=>Date.now()}) {
      json(res,200,{resource,authorization_servers:[issuer],scopes_supported:['computer:control'],bearer_methods_supported:['header']});return true;
     }
     if(path==='/.well-known/oauth-authorization-server'&&req.method==='GET'){
-     json(res,200,{issuer,authorization_endpoint:issuer+'/oauth/authorize',token_endpoint:issuer+'/oauth/token',registration_endpoint:issuer+'/oauth/register',response_types_supported:['code'],grant_types_supported:['authorization_code'],token_endpoint_auth_methods_supported:['none'],code_challenge_methods_supported:['S256'],scopes_supported:['computer:control'],authorization_response_iss_parameter_supported:true});return true;
+     json(res,200,{issuer,authorization_endpoint:issuer+'/oauth/authorize',token_endpoint:issuer+'/oauth/token',registration_endpoint:issuer+'/oauth/register',response_types_supported:['code'],grant_types_supported:['authorization_code','refresh_token'],token_endpoint_auth_methods_supported:['none'],code_challenge_methods_supported:['S256'],scopes_supported:['computer:control'],authorization_response_iss_parameter_supported:true});return true;
     }
     if(path==='/oauth/register'&&req.method==='POST'){
      const b=await body(req);
@@ -92,9 +92,15 @@ export function createOwnerOAuth({secret,issuer,now=()=>Date.now()}) {
      res.writeHead(303,{location:redirect.toString(),'cache-control':'no-store','set-cookie':`${cookieName(b.request)}=; HttpOnly; Secure; SameSite=Lax; Path=/oauth; Max-Age=0`});res.end();return true;
     }
     if(path==='/oauth/token'&&req.method==='POST'){
-     const b=await body(req),c=codes.get(b.code);codes.delete(b.code);
+     const b=await body(req);
+     if(b.grant_type==='refresh_token'){
+      const p=open(b.refresh_token,'refresh');
+      if(b.client_id!==p.client_id||b.resource&&b.resource!==resource||p.iss!==issuer||p.aud!==resource||p.scope!=='computer:control')throw Error('invalid_grant');
+      json(res,200,{access_token:seal('access',{iss:issuer,aud:resource,scope:p.scope,client_id:p.client_id,exp:now()+3600000,nonce:random()}),token_type:'Bearer',expires_in:3600,scope:p.scope});return true;
+     }
+     const c=codes.get(b.code);codes.delete(b.code);
      if(!c||b.grant_type!=='authorization_code'||b.client_id!==c.client_id||b.redirect_uri!==c.redirect_uri||b.resource!==resource||!/^[A-Za-z0-9._~-]{43,128}$/.test(b.code_verifier||'')||!same(crypto.createHash('sha256').update(b.code_verifier).digest('base64url'),c.code_challenge))throw Error('invalid_grant');
-     json(res,200,{access_token:seal('access',{iss:issuer,aud:resource,scope:'computer:control',client_id:c.client_id,exp:now()+3600000,nonce:random()}),token_type:'Bearer',expires_in:3600,scope:'computer:control'});return true;
+     json(res,200,{access_token:seal('access',{iss:issuer,aud:resource,scope:'computer:control',client_id:c.client_id,exp:now()+3600000,nonce:random()}),refresh_token:seal('refresh',{iss:issuer,aud:resource,scope:'computer:control',client_id:c.client_id,exp:now()+30*24*3600000,nonce:random()}),token_type:'Bearer',expires_in:3600,scope:'computer:control'});return true;
     }
     if(path==='/oauth/approve'&&req.method==='GET'){
      notice(req,res,400,{error:'invalid_request',reason:'request_missing',error_description:notices.request_missing});return true;

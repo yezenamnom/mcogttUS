@@ -36,4 +36,17 @@ internal static partial class Program
   File.WriteAllText(path,JsonSerializer.Serialize(report,J));
   return new{path,report};
  }
+ static object ReadLatestReport(JsonElement args)
+ {
+  if(!Config.Permissions.Get("filesRead"))throw new InvalidOperationException("Permission disabled: filesRead");
+  var kind=args.ValueKind==JsonValueKind.Object&&args.TryGetProperty("reportKind",out var value)?value.GetString():"workspace";
+  if(kind is not ("workspace" or "browser"))throw new ArgumentException("Invalid report kind");
+  var folder=System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"ChatGPTDesktopBridge","reports");
+  if(!Directory.Exists(folder))return new{found=false,kind};
+  var file=Directory.EnumerateFiles(folder,kind+"-*.json").OrderByDescending(System.IO.Path.GetFileName).FirstOrDefault();
+  if(file is null)return new{found=false,kind};
+  var text=File.ReadAllText(file);
+  if(text.Length>2000000)throw new InvalidOperationException("Report exceeds 2MB limit");
+  return new{found=true,kind,path=file,modifiedAt=File.GetLastWriteTimeUtc(file),report=JsonSerializer.Deserialize<JsonElement>(text)};
+ }
 }

@@ -52,6 +52,15 @@ test("MCP routes combined mouse operations to desktop and serves health",async()
   assert.equal(commands.length,2);
   assert.equal(commands[1].command,"desktop_mouse_action");
   assert.equal(commands[1].args.kind,"move");
+  const cached=await rpc(5,"tools/call",{name:"desktop_report_latest",arguments:{kind:"workspace"}});
+  assert.equal(cached.result.isError,undefined);
+  assert.equal(commands.at(-1).command,"desktop_mouse_action");
+  assert.equal(commands.at(-1).args.kind,"report_latest");
+  assert.equal(commands.at(-1).args.reportKind,"workspace");
+  const shell=await rpc(6,"tools/call",{name:"desktop_run_command",arguments:{command:"whoami"}});
+  assert.equal(shell.result.isError,undefined);
+  assert.equal(commands.at(-1).args.kind,"run_command");
+  assert.equal(commands.at(-1).args.command,"whoami");
   assert.equal((await (await fetch(base+"/health")).json()).desktopConnected,true);
  }finally{socket?.close();child.kill();await new Promise(r=>child.exitCode!==null?r():child.once("exit",r));}
 });

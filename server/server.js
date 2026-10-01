@@ -139,7 +139,7 @@ function callDesktop(command, args = {}, timeoutMs = 30000) {
 }
 
 function makeMcpServer() {
-  const server = new McpServer({ name: "gpt-us-browser-desktop", version: "0.7.18" });
+  const server = new McpServer({ name: "gpt-us-browser-desktop", version: "0.7.19" });
 
   // Some ChatGPT connector hosts forward the app-qualified tool name back to
   // the MCP server (for example `gpt_us.bridge_info`) instead of stripping the
@@ -147,10 +147,11 @@ function makeMcpServer() {
   // compatibility alias that invokes the exact same validated handler.
   const registerCanonicalTool = server.registerTool.bind(server);
   server.registerTool = (name, config, handler) => {
-    const canonical = registerCanonicalTool(name, config, handler);
+    const secured = { ...config, securitySchemes: config.securitySchemes || [{ type: "oauth2", scopes: ["computer:control"] }] };
+    const canonical = registerCanonicalTool(name, secured, handler);
     if (!name.startsWith("gpt_us.")) {
       registerCanonicalTool(`gpt_us.${name}`, {
-        ...config,
+        ...secured,
         description: `${config.description || name} Compatibility alias for qualified ChatGPT connector calls.`
       }, handler);
     }
@@ -433,6 +434,8 @@ function makeMcpServer() {
     const saved=await callDesktop("desktop_mouse_action",{kind:"save_report",report});
     return {content:[{type:"text",text:JSON.stringify({saved,report},null,2)}]};
   });
+  server.registerTool("desktop_report_latest",{description:"Read the most recently saved local workspace or browser report. Use it for a fast starting point, then refresh the live screen or page before clicking coordinates because saved positions can become stale.",inputSchema:z.object({kind:z.enum(["workspace","browser"]).default("workspace")})},async args=>desktopText("desktop_mouse_action",{kind:"report_latest",reportKind:args.kind}));
+  server.registerTool("desktop_run_command",{description:"Run a Windows Command Prompt command on the owner's computer only when the separate persistent 'commands' permission is enabled in the Windows agent. Prefer dedicated read-only tools; inspect command and consequences before use. Limited to 30 seconds and capped output.",inputSchema:z.object({command:z.string().min(1).max(4000),timeoutMs:z.number().int().min(1000).max(30000).optional()})},async args=>desktopText("desktop_mouse_action",{kind:"run_command",...args},35000));
   server.registerTool("desktop_screen_size",{description:"Get the Windows virtual desktop dimensions.",inputSchema:z.object({})},async()=>desktopText("desktop_screen_size"));
   server.registerTool("desktop_monitors",{description:"List Windows monitors with index, primary flag and coordinates.",inputSchema:z.object({})},async()=>desktopText("desktop_monitors"));
   server.registerTool("desktop_clipboard_get",{description:"Read text from the Windows clipboard when clipboard permission is enabled.",inputSchema:z.object({})},async()=>desktopText("desktop_clipboard_get"));
@@ -506,7 +509,7 @@ const httpServer = http.createServer(async (req, res) => {
     res.end(JSON.stringify({
       ok: true,
       service: "comet-chatgpt-bridge",
-      version: "0.7.18",
+      version: "0.7.19",
       mcp: "ready",
       browserConnected: !!browserSocket && browserSocket.readyState === WebSocket.OPEN,
       browserConnectedAt,
@@ -519,7 +522,7 @@ const httpServer = http.createServer(async (req, res) => {
 
   if (url.pathname === "/" && req.method === "GET") {
     res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({ service: "comet-chatgpt-bridge", version: "0.7.18", status: "ok", mcp: "/mcp" }));
+    res.end(JSON.stringify({ service: "comet-chatgpt-bridge", version: "0.7.19", status: "ok", mcp: "/mcp" }));
     return;
   }
 
@@ -593,7 +596,7 @@ wss.on("connection", (socket, req) => {
 });
 
 httpServer.listen(PORT, "0.0.0.0", () => {
-  console.log(`Comet ChatGPT Bridge v0.7.18 listening on 0.0.0.0:${PORT}`);
+  console.log(`Comet ChatGPT Bridge v0.7.19 listening on 0.0.0.0:${PORT}`);
   console.log("MCP v2 handler ready at /mcp | WSS /browser + /desktop | health /health");
 });
 
