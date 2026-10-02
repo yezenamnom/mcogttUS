@@ -22,7 +22,7 @@ const HOSTINGER_SFTP_DIR = process.env.HOSTINGER_SFTP_DIR || "";
 const HOSTINGER_SCREENSHOT_BASE_URL = (process.env.HOSTINGER_SCREENSHOT_BASE_URL || "").replace(/\/$/, "");
 // ChatGPT treats the resource URI as the component cache key. Keep each
 // published component immutable and bump the URI whenever its HTML changes.
-const LIVE_VIEW_URI = "ui://gpt-us/live-view-v27.html";
+const LIVE_VIEW_URI = "ui://gpt-us/live-view-v28.html";
 const PUBLIC_ORIGIN = (process.env.OAUTH_ISSUER || "https://mcogttus-production.up.railway.app").replace(/\/$/, "");
 const LIVE_WS_ORIGIN = PUBLIC_ORIGIN.replace(/^https:/, "wss:").replace(/^http:/, "ws:");
 const LIVE_VIEW_HTML = readFileSync(new URL("./live-view.html", import.meta.url), "utf8");
@@ -811,10 +811,12 @@ httpServer.on("upgrade", (req, socket, head) => {
 
 liveWss.on("connection", (socket, req) => {
   // Close all previous viewers, including previews created by older releases.
-  for (const previous of liveWss.clients) if(previous!==socket&&previous.readyState===WebSocket.OPEN)previous.close(4002,"Replaced by newer live viewer");
-  const parallelPreview = req.liveParallel === true;
-  if(!parallelPreview&&activeLiveViewer&&activeLiveViewer!==socket&&activeLiveViewer.readyState===WebSocket.OPEN)activeLiveViewer.close(4002,"Replaced by newer live viewer");
-  if(!parallelPreview)activeLiveViewer=socket;
+  for (const previous of liveWss.clients) if(previous!==socket&&previous.readyState===WebSocket.OPEN) {
+    previous.liveActive = false;
+    livePushSubscribers.delete(previous);
+    previous.close(4002,"Replaced by newer live viewer");
+  }
+  activeLiveViewer=socket;
   let monitor = 0;
   let active = true;
   let pumping = false;
@@ -822,18 +824,25 @@ liveWss.on("connection", (socket, req) => {
   let source = "desktop";
   socket.liveMonitor = 0;
   socket.liveActive = true;
+  let lastHeartbeat = Date.now();
+  const leaseMs = Math.max(1000, Number(process.env.LIVE_VIEW_LEASE_MS) || 15000);
+  const leaseTimer = setInterval(() => {
+    if (Date.now() - lastHeartbeat > leaseMs) socket.close(4004, "Viewer heartbeat expired");
+  }, Math.min(5000, leaseMs / 2));
+  leaseTimer.unref();
   const sendJson = value => { if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(value)); };
   const pump = async () => {
     if (pumping) return;
     pumping = true;
-    while (active && socket.readyState === WebSocket.OPEN) {
+    while (active && socket.liveActive && activeLiveViewer === socket && !pushMode && socket.readyState === WebSocket.OPEN) {
       if(source!=="desktop") { await new Promise(resolve=>setTimeout(resolve,250)); continue; }
       const started = Date.now();
       const requestedScreen = monitor;
       try {
         const shot = await getFastDesktopFrame(requestedScreen, 1920, 85, 12000);
         const frame = shot.buffer;
-        if (socket.readyState !== WebSocket.OPEN) break;
+        if (!active || !socket.liveActive || activeLiveViewer !== socket || socket.readyState !== WebSocket.OPEN) break;
+        if (source !== "desktop" || monitor !== requestedScreen || pushMode) continue;
         sendJson({ type: "frame", screen: requestedScreen, at: Date.now(), bytes: frame.length, latencyMs: Date.now() - started, mimeType: shot.mimeType, width: shot.width, height: shot.height, fallback: !!shot.fallback });
         socket.send(frame, { binary: true });
         const wait = Math.max(0, 1000 / 12 - (Date.now() - started));
@@ -848,7 +857,9 @@ liveWss.on("connection", (socket, req) => {
   socket.on("message", raw => {
     try {
       const message = JSON.parse(raw.toString());
-      if(socket.readyState!==WebSocket.OPEN)return;
+      if(socket.readyState!==WebSocket.OPEN || activeLiveViewer!==socket)return;
+      if (message.type === "heartbeat") { lastHeartbeat = Date.now(); return; }
+      lastHeartbeat = Date.now();
       if (message.type === "select" && message.source === "browser") {
         source="browser"; socket.liveSource="browser"; active=true; socket.liveActive=true; pushMode=false; livePushSubscribers.delete(socket);
         void callDesktop("desktop_mouse_action",{kind:"live_stream_stop"},3000).catch(()=>{});
@@ -874,7 +885,9 @@ liveWss.on("connection", (socket, req) => {
     } catch {}
   });
   socket.on("close", () => {
+    clearInterval(leaseTimer);
     active = false;
+    socket.liveActive = false;
     livePushSubscribers.delete(socket);
     const wasActiveViewer = activeLiveViewer === socket;
     if (wasActiveViewer) activeLiveViewer = null;
