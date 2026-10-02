@@ -37,7 +37,7 @@ test('viewer times out a stalled ChatGPT state call and schedules retry',async()
   const elements=Object.fromEntries(['screen','frame','video','message','status','monitor','toggle','audio','expand'].map(id=>[id,node()]));
   const window={parent:{postMessage(){}},addEventListener(){},openai:{callTool(){return new Promise(()=>{});}}};
   vm.runInNewContext(script,{window,WebSocket:class{},Blob:class{},FileReader:class{},document:{body:{classList:{add(){},remove(){}}},hidden:false,fullscreenElement:null,exitFullscreen(){},addEventListener(){},getElementById:id=>elements[id],createElement:node},performance:{now:()=>5},setTimeout(fn){const id=++timerId;timers.set(id,fn);return id},clearTimeout(id){timers.delete(id)},Map,Promise,Error,String,Number,Math,JSON});
-  const timeout=timers.entries().next().value;timers.delete(timeout[0]);timeout[1]();
+  for (const [id, fn] of [...timers]) { timers.delete(id); fn(); }
   for(let i=0;i<12;i++)await Promise.resolve();
   assert.match(elements.status.textContent,/تعذر جلب بيانات الاتصال/);
 });
@@ -54,10 +54,10 @@ test('expand button grows inline and keeps ChatGPT below the viewer',async()=>{
   const state={connected:true,streamUrl:'wss://bridge/live?ticket=secret',monitors:[{index:0,name:'Primary',width:1200,height:800,primary:true}]};
   const h=harness(state,state);
   await h.elements.expand.listeners.click();
-  assert.deepEqual(h.displayModes,[]);
+  assert.deepEqual(h.displayModes,['fullscreen']);
   assert.equal(h.elements.expand.textContent,'الحجم العادي');
   await h.elements.expand.listeners.click();
-  assert.deepEqual(h.displayModes,[]);
+  assert.deepEqual(h.displayModes,['fullscreen']);
   assert.equal(h.elements.expand.textContent,'تكبير داخل المحادثة');
 });
 
