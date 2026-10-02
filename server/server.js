@@ -398,24 +398,31 @@ function makeMcpServer() {
   });
 
   server.registerTool("get_page", {
-    description: "Read the active Comet tab: title, URL, visible text, and interactive elements.",
-    inputSchema: z.object({ maxChars: z.number().int().min(1000).max(100000).optional() })
-  }, async ({ maxChars }) => ({ content: [{ type: "text", text: JSON.stringify(await callBrowser("get_page", { maxChars }), null, 2) }] }));
+    description: "Read the pinned GPT US working tab, not the ChatGPT pane. If the user identifies left/right/a URL/title, call select_working_tab first. The pin persists across later messages until changed or cleared.",
+    inputSchema: z.object({ tabId:z.number().int().optional(), maxChars: z.number().int().min(1000).max(100000).optional() })
+  }, async args => ({ content: [{ type: "text", text: JSON.stringify(await callBrowser("get_page", args), null, 2) }] }));
+
+  server.registerTool("select_working_tab", {
+    description: "Pin the user's intended Comet site as the persistent GPT US target. Use side=left/right for split view, or match tabId/title/URL. After selection all browser read/click/type/navigation tools stay on it even when ChatGPT is active. Never silently fall back if it closes.",
+    inputSchema:z.object({tabId:z.number().int().optional(),side:z.enum(["left","right"]).optional(),titleContains:z.string().min(1).optional(),urlContains:z.string().min(1).optional()}).refine(v=>v.tabId!==undefined||v.side||v.titleContains||v.urlContains,{message:"Specify tabId, side, titleContains, or urlContains"})
+  }, async args => ({content:[{type:"text",text:JSON.stringify(await callBrowser("select_working_tab",args),null,2)}]}));
+  server.registerTool("get_working_tab", {description:"Return the currently pinned GPT US working tab.",inputSchema:z.object({})}, async()=>({content:[{type:"text",text:JSON.stringify(await callBrowser("get_working_tab",{}),null,2)}]}));
+  server.registerTool("clear_working_tab", {description:"Clear the pinned working tab only when the user ends the task or explicitly asks to change/reset the target.",inputSchema:z.object({})}, async()=>({content:[{type:"text",text:JSON.stringify(await callBrowser("clear_working_tab",{}),null,2)}]}));
 
   server.registerTool("click", {
-    description: "Click by CSS selector or visible text, with deep DOM fallback across open Shadow DOM and same-origin frames.",
-    inputSchema: z.object({ selector: z.string().optional(), text: z.string().optional() })
+    description: "Click inside the pinned working tab by CSS selector or visible text. Returns the same tab's before/after title, URL and load status for verification.",
+    inputSchema: z.object({ tabId:z.number().int().optional(), selector: z.string().optional(), text: z.string().optional() })
   }, async args => ({ content: [{ type: "text", text: JSON.stringify(await callBrowser("click", args), null, 2) }] }));
 
   server.registerTool("type", {
-    description: "Type text into an editable element selected by CSS selector.",
-    inputSchema: z.object({ selector: z.string(), text: z.string(), clearFirst: z.boolean().optional() })
+    description: "Type into the pinned working tab; never switch to the ChatGPT composer unless the user selected it explicitly.",
+    inputSchema: z.object({ tabId:z.number().int().optional(), selector: z.string(), text: z.string(), clearFirst: z.boolean().optional() })
   }, async args => ({ content: [{ type: "text", text: JSON.stringify(await callBrowser("type", args), null, 2) }] }));
 
   server.registerTool("navigate", {
-    description: "Navigate the active Comet tab to a URL.",
-    inputSchema: z.object({ url: z.url() })
-  }, async ({ url }) => ({ content: [{ type: "text", text: JSON.stringify(await callBrowser("navigate", { url }), null, 2) }] }));
+    description: "Navigate the pinned GPT US working tab to a URL while preserving its target identity.",
+    inputSchema: z.object({ tabId:z.number().int().optional(), url: z.url() })
+  }, async args => ({ content: [{ type: "text", text: JSON.stringify(await callBrowser("navigate", args), null, 2) }] }));
 
   server.registerTool("screenshot", {
     description: "Capture one Windows monitor for ChatGPT vision and attach its image to a follow-up message. Monitor 1 is screen index 0. By default capture only the requested/first monitor. Set allScreens only when the user explicitly asks for every monitor. Wait for the image-based follow-up before describing the screen. Temporary share links are opt-in.",
@@ -503,28 +510,28 @@ function makeMcpServer() {
   });
 
   server.registerTool("move_mouse", {
-    description: "Move the visible virtual cursor to viewport coordinates without clicking.",
-    inputSchema: z.object({ x: z.number(), y: z.number() })
+    description: "Move the virtual cursor inside the pinned working tab without clicking.",
+    inputSchema: z.object({ tabId:z.number().int().optional(), x: z.number(), y: z.number() })
   }, async args => ({ content: [{ type: "text", text: JSON.stringify(await callBrowser("move_mouse", args), null, 2) }] }));
 
   server.registerTool("click_at", {
-    description: "Click the element at viewport x/y coordinates. Useful after inspecting a screenshot.",
-    inputSchema: z.object({ x: z.number(), y: z.number() })
+    description: "Click viewport coordinates inside the pinned working tab. Use coordinates from that same tab only.",
+    inputSchema: z.object({ tabId:z.number().int().optional(), x: z.number(), y: z.number() })
   }, async args => ({ content: [{ type: "text", text: JSON.stringify(await callBrowser("click_at", args), null, 2) }] }));
 
   server.registerTool("inspect_form", {
-    description: "Inspect editable fields on the active page, including labels, names, types, options and positions.",
-    inputSchema: z.object({})
-  }, async () => ({ content: [{ type: "text", text: JSON.stringify(await callBrowser("inspect_form"), null, 2) }] }));
+    description: "Inspect editable fields on the pinned working tab.",
+    inputSchema: z.object({tabId:z.number().int().optional()})
+  }, async args => ({ content: [{ type: "text", text: JSON.stringify(await callBrowser("inspect_form",args), null, 2) }] }));
 
   server.registerTool("fill_form", {
     description: "Fill many form fields in one fast browser round-trip.",
-    inputSchema: z.object({ fields: z.array(z.object({ selector:z.string().optional(), name:z.string().optional(), id:z.string().optional(), index:z.number().int().optional(), value:z.union([z.string(),z.number(),z.boolean()]) })).min(1).max(200) })
+    inputSchema: z.object({ tabId:z.number().int().optional(), fields: z.array(z.object({ selector:z.string().optional(), name:z.string().optional(), id:z.string().optional(), index:z.number().int().optional(), value:z.union([z.string(),z.number(),z.boolean()]) })).min(1).max(200) })
   }, async args => ({ content: [{ type: "text", text: JSON.stringify(await callBrowser("fill_form", args), null, 2) }] }));
 
   server.registerTool("press_key", {
     description: "Send a keyboard key to the active element or a CSS-selected element.",
-    inputSchema: z.object({ key:z.string().min(1), selector:z.string().optional() })
+    inputSchema: z.object({ tabId:z.number().int().optional(), key:z.string().min(1), selector:z.string().optional() })
   }, async args => ({ content: [{ type: "text", text: JSON.stringify(await callBrowser("press_key", args), null, 2) }] }));
 
   server.registerTool("batch_actions", {
@@ -555,7 +562,7 @@ function makeMcpServer() {
   });
 
   server.registerTool("list_tabs", {
-    description: "List tabs in the current Comet window.",
+    description: "List Comet tabs with index, split-view ID, and which one is pinned as the GPT US working target. Use before selecting among ambiguous tabs.",
     inputSchema: z.object({})
   }, async () => ({ content: [{ type: "text", text: JSON.stringify(await callBrowser("list_tabs"), null, 2) }] }));
 
