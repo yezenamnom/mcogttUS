@@ -26,8 +26,9 @@ internal static partial class Program
    if(Math.Abs((long)dx)>1000||Math.Abs((long)dy)>1000)throw new ArgumentException("Invalid pad movement");
    var bounds=System.Windows.Forms.SystemInformation.VirtualScreen;
    int px=Math.Clamp(cursor.X+dx,bounds.Left,bounds.Right-1),py=Math.Clamp(cursor.Y+dy,bounds.Top,bounds.Bottom-1);
-   await Smooth(px,py,0);
    string operation=S(a,"operation","move");
+   if(operation is not ("click" or "scroll" or "move"))throw new ArgumentException("Invalid pad operation");
+   if(!SetCursorPos(px,py))throw new InvalidOperationException("Cannot move cursor");
    if(operation=="click")Click(S(a,"button","left"),I(a,"count",1)==2?2:1);
    else if(operation=="scroll")MouseInput(0x0800u,data:unchecked((uint)Math.Clamp(I(a,"delta"),-1200,1200)));
    else if(operation!="move")throw new ArgumentException("Invalid pad operation");
