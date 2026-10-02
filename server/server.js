@@ -22,7 +22,7 @@ const HOSTINGER_SFTP_DIR = process.env.HOSTINGER_SFTP_DIR || "";
 const HOSTINGER_SCREENSHOT_BASE_URL = (process.env.HOSTINGER_SCREENSHOT_BASE_URL || "").replace(/\/$/, "");
 // ChatGPT treats the resource URI as the component cache key. Keep each
 // published component immutable and bump the URI whenever its HTML changes.
-const LIVE_VIEW_URI = "ui://gpt-us/live-view-v24.html";
+const LIVE_VIEW_URI = "ui://gpt-us/live-view-v25.html";
 const PUBLIC_ORIGIN = (process.env.OAUTH_ISSUER || "https://mcogttus-production.up.railway.app").replace(/\/$/, "");
 const LIVE_WS_ORIGIN = PUBLIC_ORIGIN.replace(/^https:/, "wss:").replace(/^http:/, "ws:");
 const LIVE_VIEW_HTML = readFileSync(new URL("./live-view.html", import.meta.url), "utf8");
