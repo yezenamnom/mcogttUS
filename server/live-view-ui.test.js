@@ -2,11 +2,21 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
+test('keyboard and settings preserve live height and keep chat inline',()=>{
+ const h=harness({connected:true,streamUrl:'wss://bridge/live?ticket=test',monitors:[{index:0,primary:true}]});
+ const height=h.document.body.style['--live-height'];assert.equal(height,'294px');
+ h.elements.settingsToggle.listeners.click();h.elements.keyboardToggle.listeners.click();
+ assert.equal(h.document.body.style['--live-height'],height);assert.equal(h.elements.remoteText.focusOptions.preventScroll,true);
+ assert.equal(h.displayModes[0],'inline');
+ const html=readFileSync(new URL('./live-view.html',import.meta.url),'utf8');assert.match(html,/font: 16px system-ui/);assert.match(html,/\.screen, body.expanded \.screen \{ height: var\(--live-height,340px\); min-height: 0; \}/);
+});
 
 test('touchpad and mobile keyboard use the private stream and preserve failed text',()=>{
  const h=harness({connected:true,streamUrl:'wss://bridge/live?ticket=test',monitors:[{index:0,primary:true}]});
  const socket=h.sockets[0];socket.onopen();
  h.elements.keyboardToggle.listeners.click();assert.equal(h.elements.remoteText.focused,true);
+ assert.equal(h.elements.remoteText.focusOptions.preventScroll,true);
+ h.elements.settingsToggle.listeners.click();assert.equal(h.elements.controlSettings.hidden,false);
  h.elements.remoteText.value='مرحبا';h.elements.sendText.listeners.click();
  const typed=socket.sent.at(-1);assert.equal(typed.command,'text');assert.equal(typed.args.text,'مرحبا');
  socket.onmessage({data:JSON.stringify({type:'control_result',id:typed.id,ok:false,error:'Permission disabled'})});assert.equal(h.elements.remoteText.value,'مرحبا');
@@ -23,8 +33,8 @@ function harness(initial=null, toolResult=null) {
   const html=readFileSync(new URL('./live-view.html',import.meta.url),'utf8');
   const script=html.match(/<script>([\s\S]*?)<\/script>/)?.[1]?.replace('__GPT_US_BOOTSTRAP_STATE__',JSON.stringify(initial));
   const calls=[]; const sockets=[]; const timers=new Map(); let timerId=0;
-const node=()=>({hidden:true,focus(){this.focused=true},setPointerCapture(){},textContent:'',value:'',src:'',options:[],listeners:{},style:{setProperty(){}},classList:{ready:false,add(){this.ready=true},remove(){this.ready=false}},replaceChildren(...items){this.options=items},addEventListener(type,fn){this.listeners[type]=fn},removeAttribute(){},requestFullscreen(){},play(){return Promise.resolve()},pause(){},load(){}});
-  const elements=Object.fromEntries(['screen','frame','video','message','status','monitor','toggle','audio','expand','controlStatus','touchpad','padToggle','keyboardToggle','padPanel','keyboardPanel','remoteText','sendText','leftClick','rightClick','doubleClick','enterKey','backspaceKey','tabKey','escapeKey'].map(id=>[id,node()]));
+const node=()=>({hidden:true,setAttribute(){},focus(options){this.focused=true;this.focusOptions=options},setPointerCapture(){},textContent:'',value:'',src:'',options:[],listeners:{},style:{setProperty(name,value){this[name]=value}},classList:{ready:false,add(){this.ready=true},remove(){this.ready=false}},replaceChildren(...items){this.options=items},addEventListener(type,fn){this.listeners[type]=fn},removeAttribute(){},requestFullscreen(){},play(){return Promise.resolve()},pause(){},load(){}});
+  const elements=Object.fromEntries(['screen','frame','video','message','status','monitor','toggle','audio','expand','settingsToggle','controlSettings','controlStatus','touchpad','padToggle','keyboardToggle','padPanel','keyboardPanel','remoteText','sendText','leftClick','rightClick','doubleClick','enterKey','backspaceKey','tabKey','escapeKey'].map(id=>[id,node()]));
   class FakeWebSocket { static OPEN=1; constructor(url){this.url=url;this.readyState=1;this.sent=[];sockets.push(this)} send(value){this.sent.push(JSON.parse(value))} close(){this.readyState=3} }
   const openTargets=[]; const displayModes=[];
   const windowEvents={}; const documentEvents={}; const intervals=new Map();
@@ -66,9 +76,9 @@ test('viewer times out a stalled ChatGPT state call and schedules retry',async()
   const html=readFileSync(new URL('./live-view.html',import.meta.url),'utf8');
   const script=html.match(/<script>([\s\S]*?)<\/script>/)?.[1]?.replace('__GPT_US_BOOTSTRAP_STATE__','null');
   const timers=new Map();let timerId=0;const node=()=>({textContent:'',classList:{add(){},remove(){}},replaceChildren(){},addEventListener(){}});
-  const elements=Object.fromEntries(['screen','frame','video','message','status','monitor','toggle','audio','expand','controlStatus','touchpad','padToggle','keyboardToggle','padPanel','keyboardPanel','remoteText','sendText','leftClick','rightClick','doubleClick','enterKey','backspaceKey','tabKey','escapeKey'].map(id=>[id,node()]));
+  const elements=Object.fromEntries(['screen','frame','video','message','status','monitor','toggle','audio','expand','settingsToggle','controlSettings','controlStatus','touchpad','padToggle','keyboardToggle','padPanel','keyboardPanel','remoteText','sendText','leftClick','rightClick','doubleClick','enterKey','backspaceKey','tabKey','escapeKey'].map(id=>[id,node()]));
   const window={parent:{postMessage(){}},addEventListener(){},openai:{callTool(){return new Promise(()=>{});}}};
-  vm.runInNewContext(script,{window,WebSocket:class{},Blob:class{},FileReader:class{},document:{body:{classList:{add(){},remove(){}}},hidden:false,fullscreenElement:null,exitFullscreen(){},addEventListener(){},getElementById:id=>elements[id],createElement:node},performance:{now:()=>5},setTimeout(fn){const id=++timerId;timers.set(id,fn);return id},clearTimeout(id){timers.delete(id)},Map,Promise,Error,String,Number,Math,JSON});
+  vm.runInNewContext(script,{window,WebSocket:class{},Blob:class{},FileReader:class{},document:{body:{style:{setProperty(){}},classList:{add(){},remove(){}}},hidden:false,fullscreenElement:null,exitFullscreen(){},addEventListener(){},getElementById:id=>elements[id],createElement:node},performance:{now:()=>5},setTimeout(fn){const id=++timerId;timers.set(id,fn);return id},clearTimeout(id){timers.delete(id)},Map,Promise,Error,String,Number,Math,JSON});
   for (const [id, fn] of [...timers]) { timers.delete(id); fn(); }
   for(let i=0;i<12;i++)await Promise.resolve();
   assert.match(elements.status.textContent,/تعذر جلب بيانات الاتصال/);
@@ -86,10 +96,10 @@ test('expand button grows inline and keeps ChatGPT below the viewer',async()=>{
   const state={connected:true,streamUrl:'wss://bridge/live?ticket=secret',monitors:[{index:0,name:'Primary',width:1200,height:800,primary:true}]};
   const h=harness(state,state);
   await h.elements.expand.listeners.click();
-  assert.deepEqual(h.displayModes,['fullscreen']);
+  assert.deepEqual(h.displayModes,['inline']);
   assert.equal(h.elements.expand.textContent,'الحجم العادي');
   await h.elements.expand.listeners.click();
-  assert.deepEqual(h.displayModes,['fullscreen']);
+  assert.deepEqual(h.displayModes,['inline']);
   assert.equal(h.elements.expand.textContent,'تكبير داخل المحادثة');
 });
 

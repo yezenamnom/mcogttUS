@@ -8,7 +8,7 @@
     :root { color-scheme: dark; font-family: system-ui, sans-serif; background: transparent; color: #ececec; }
     * { box-sizing: border-box; }
     html, body { margin: 0; width: 100%; min-height: 100%; background: transparent; }
-    body { padding: 14px; min-height: 360px; min-height: 100dvh; }
+    body { padding: 14px; min-height: 0; position: relative; overflow-anchor: none; }
     .bar { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 12px; }
     h1 { font-size: 16px; margin: 0 auto 0 0; }
     select, button { background: #262626; color: #ececec; border: 1px solid #444; border-radius: 9px; padding: 8px 12px; font: inherit; }
@@ -21,11 +21,14 @@
     .message { position: absolute; padding: 20px; text-align: center; line-height: 1.6; color: #b6c9e3; }
     .screen.ready .message { display: none; }
     footer { margin-top: 9px; color: #9caec4; font-size: 12px; }
-    .controls { margin-top: 10px; border: 1px solid #444; border-radius: 10px; padding: 10px; }
+    .controls { position: absolute; top: 72px; inset-inline: 8px; z-index: 10; background: #181818; border: 1px solid #555; border-radius: 10px; padding: 10px; max-height: 280px; overflow: auto; overscroll-behavior: contain; }
+    [hidden] { display: none !important; }
+    .screen, body.expanded .screen { height: var(--live-height, 340px); min-height: 0; }
     .pad { touch-action: none; user-select: none; height: 150px; display: grid; place-items: center; background: #20202b; border: 1px dashed #8d83bb; border-radius: 10px; color: #b6c9e3; }
-    .controls textarea { width: 100%; min-height: 60px; background: #222; color: white; font: inherit; border: 1px solid #555; border-radius: 8px; padding: 8px; }
+    .controls textarea { width: 100%; min-height: 60px; background: #222; color: white; font: 16px system-ui; border: 1px solid #555; border-radius: 8px; padding: 8px; resize: none; }
     body.expanded .screen { height: min(78vh, 900px); }
     @media (max-width: 680px) { body { padding: max(8px, env(safe-area-inset-top)) 8px max(8px, env(safe-area-inset-bottom)); } .bar { gap: 6px; } h1 { width: 100%; margin: 0; } select { max-width: 100%; flex: 1 1 210px; } select, button { padding: 7px 9px; } .screen { height: 58dvh; min-height: 260px; } body.expanded .screen { height: 72dvh; } }
+    .screen, body.expanded .screen { height: var(--live-height,340px); min-height: 0; }
   </style>
 </head>
 <body>
@@ -33,12 +36,13 @@
     <h1>الكمبيوتر المباشر</h1>
     <label for="monitor">الشاشة</label><select id="monitor" aria-label="اختر الشاشة"></select>
     <button id="toggle" type="button">إيقاف مؤقت</button>
+    <button id="settingsToggle" type="button" aria-expanded="false" aria-controls="controlSettings">⚙ الإعدادات</button>
     <button id="expand" type="button">تكبير داخل المحادثة</button>
     <button id="audio" type="button" hidden>تشغيل الصوت</button>
     <span class="badge" id="status" role="status">جارٍ الاتصال…</span>
   </div>
   <div class="screen" id="screen"><img id="frame" alt="عرض مباشر لشاشة الكمبيوتر"><video id="video" autoplay muted playsinline></video><div class="message" id="message">بانتظار الاتصال بالكمبيوتر…</div></div>
-  <section class="controls" aria-label="التحكم اليدوي بالكمبيوتر">
+  <section id="controlSettings" class="controls" hidden aria-label="التحكم اليدوي بالكمبيوتر">
     <div class="bar"><button id="padToggle" type="button">لوحة لمس</button><button id="keyboardToggle" type="button">فتح الكيبورد</button><span id="controlStatus" class="badge" role="status">التحكم بالكمبيوتر والنافذة التي عليها التركيز</span></div>
     <div id="padPanel" hidden><div id="touchpad" class="pad" aria-label="لوحة لمس لتحريك ماوس الكمبيوتر">حرّك بإصبع · اضغط للنقر · إصبعان للتمرير</div><div class="bar"><button id="leftClick" type="button">نقرة يسار</button><button id="rightClick" type="button">نقرة يمين</button><button id="doubleClick" type="button">نقرتان</button></div></div>
     <div id="keyboardPanel" hidden><textarea id="remoteText" aria-label="النص المراد كتابته على الكمبيوتر" placeholder="اكتب هنا ثم اضغط إرسال النص" autocapitalize="off" spellcheck="false"></textarea><div class="bar"><button id="sendText" type="button">إرسال النص</button><button id="enterKey" type="button">Enter</button><button id="backspaceKey" type="button">⌫</button><button id="tabKey" type="button">Tab</button><button id="escapeKey" type="button">Esc</button></div></div>
@@ -78,6 +82,9 @@
       const toggle = document.getElementById('toggle');
       const audioButton = document.getElementById('audio');
       const expandButton = document.getElementById('expand');
+      const stableViewportHeight=window.innerHeight||700;
+      function sizeLive(){document.body.style.setProperty('--live-height',`${Math.round(Math.min(expandedMode?550:420,Math.max(190,stableViewportHeight*(expandedMode?.65:.42))))}px`);}
+      document.getElementById('settingsToggle')?.addEventListener('click',()=>{const panel=document.getElementById('controlSettings');panel.hidden=!panel.hidden;document.getElementById('settingsToggle').setAttribute('aria-expanded',String(!panel.hidden));});
       const controlStatus=document.getElementById('controlStatus');
       const pad=document.getElementById('touchpad'), pointers=new Map();
       let padTimer=null, dx=0,dy=0;
@@ -89,7 +96,7 @@
       function flushPad(){if(padTimer){clearTimeout(padTimer);padTimer=null;}if(dx||dy){control('pad',{operation:'move',dx:Math.max(-1000,Math.min(1000,Math.round(dx))),dy:Math.max(-1000,Math.min(1000,Math.round(dy)))});dx=dy=0;}}
       function padClick(button='left',count=1){flushPad();control('pad',{operation:'click',dx:0,dy:0,button,count});}
       document.getElementById('padToggle')?.addEventListener('click',()=>{const panel=document.getElementById('padPanel');panel.hidden=!panel.hidden;});
-      document.getElementById('keyboardToggle')?.addEventListener('click',()=>{const panel=document.getElementById('keyboardPanel');panel.hidden=!panel.hidden;if(!panel.hidden)document.getElementById('remoteText').focus();});
+      document.getElementById('keyboardToggle')?.addEventListener('click',()=>{const panel=document.getElementById('keyboardPanel');panel.hidden=!panel.hidden;if(!panel.hidden)document.getElementById('remoteText').focus({preventScroll:true});});
       pad?.addEventListener('pointerdown',e=>{e.preventDefault();pad.setPointerCapture(e.pointerId);if(pointers.size)for(const p of pointers.values())p.moved=true;pointers.set(e.pointerId,{x:e.clientX,y:e.clientY,start:performance.now(),distance:0,moved:pointers.size>0});});
       pad?.addEventListener('pointermove',e=>{const p=pointers.get(e.pointerId);if(!p)return;e.preventDefault();const mx=e.clientX-p.x,my=e.clientY-p.y;p.x=e.clientX;p.y=e.clientY;p.distance+=Math.abs(mx)+Math.abs(my);if(p.distance>6)p.moved=true;if(pointers.size>1){flushPad();if(Math.abs(my)>=2)control('pad',{operation:'scroll',dx:0,dy:0,delta:Math.round(-my*8)});}else{dx+=mx*1.5;dy+=my*1.5;if(!padTimer)padTimer=setTimeout(flushPad,50);}});
       pad?.addEventListener('pointerup',e=>{const p=pointers.get(e.pointerId);pointers.delete(e.pointerId);if(p&&!p.moved&&performance.now()-p.start<450)padClick();else flushPad();});
@@ -368,6 +375,7 @@
         }
       });
       const paintExpandedMode = () => {
+        sizeLive();
         if (expandedMode) document.body.classList.add('expanded'); else document.body.classList.remove('expanded');
         expandButton.textContent = expandedMode ? 'الحجم العادي' : 'تكبير داخل المحادثة';
         window.openai?.notifyIntrinsicHeight?.(document.documentElement.scrollHeight);
@@ -380,9 +388,9 @@
         pinRequested = true;
         try {
           if (window.openai?.requestDisplayMode) {
-            await window.openai.requestDisplayMode({ mode: 'fullscreen' });
+            await window.openai.requestDisplayMode({ mode: 'inline' });
           } else {
-            await rpc('ui/request-display-mode', { mode: 'fullscreen' });
+            await rpc('ui/request-display-mode', { mode: 'inline' });
           }
         } catch { pinRequested = false; }
       };

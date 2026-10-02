@@ -61,8 +61,8 @@ test("private live-view resource, auth, monitor selection and frame delivery", a
     const initialized = await rpc(1, "initialize", { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "live-view-test", version: "1" } });
     assert.match(initialized.result.instructions, /نفّذ أولًا، ثم تحقق/);
     const tools = (await rpc(2, "tools/list", {})).result.tools;
-    assert.equal(tools.find(t => t.name === "open_live_view")._meta.ui.resourceUri, "ui://gpt-us/live-view-v31.html");
-    assert.equal(tools.find(t => t.name === "open_live_view")._meta["openai/outputTemplate"], "ui://gpt-us/live-view-v31.html");
+    assert.equal(tools.find(t => t.name === "open_live_view")._meta.ui.resourceUri, "ui://gpt-us/live-view-v32.html");
+    assert.equal(tools.find(t => t.name === "open_live_view")._meta["openai/outputTemplate"], "ui://gpt-us/live-view-v32.html");
     assert.equal(tools.find(t => t.name === "open_live_view")._meta["openai/widgetAccessible"], true);
     assert.deepEqual(tools.find(t => t.name === "live_view_frame")._meta.ui.visibility, ["app"]);
     assert.deepEqual(tools.find(t => t.name === "live_view_state")._meta.ui.visibility, ["app"]);
@@ -77,10 +77,10 @@ test("private live-view resource, auth, monitor selection and frame delivery", a
     assert.match(smartResource.result.contents[0].text, /الخطوة التالية/);
     const smartOpened = await rpc(31, "tools/call", { name: "open_smart_panel", arguments: { task: "غيّر الصوت" } });
     assert.equal(smartOpened.result.structuredContent.phase, "idle");
-    const resource = await rpc(3, "resources/read", { uri: "ui://gpt-us/live-view-v31.html" });
+    const resource = await rpc(3, "resources/read", { uri: "ui://gpt-us/live-view-v32.html" });
     assert.match(resource.result.contents[0].text, /الكمبيوتر المباشر/);
     assert.match(resource.result.contents[0].text, /const embeddedState = null/);
-    for(let version=23;version<=30;version++){
+    for(let version=23;version<=31;version++){
       const oldUri=`ui://gpt-us/live-view-v${version}.html`;
       const cachedResource=await rpc(100+version,'resources/read',{uri:oldUri});
       assert.equal(cachedResource.error,undefined);
