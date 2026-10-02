@@ -10,7 +10,7 @@ test("private live-view resource, auth, monitor selection and frame delivery", a
   const token = "live-view-test-only";
   const child = spawn(process.execPath, ["server.js"], {
     cwd: import.meta.dirname,
-    env: { ...process.env, PORT: String(port), BRIDGE_TOKEN: token }, stdio: "pipe"
+    env: { ...process.env, PORT: String(port), BRIDGE_TOKEN: token, LIVE_VIEW_LEASE_MS: "2000" }, stdio: "pipe"
   });
   let logs = "";
   child.stderr.on("data", data => { logs += data; });
@@ -55,8 +55,8 @@ test("private live-view resource, auth, monitor selection and frame delivery", a
     const initialized = await rpc(1, "initialize", { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "live-view-test", version: "1" } });
     assert.match(initialized.result.instructions, /نفّذ أولًا، ثم تحقق/);
     const tools = (await rpc(2, "tools/list", {})).result.tools;
-    assert.equal(tools.find(t => t.name === "open_live_view")._meta.ui.resourceUri, "ui://gpt-us/live-view-v27.html");
-    assert.equal(tools.find(t => t.name === "open_live_view")._meta["openai/outputTemplate"], "ui://gpt-us/live-view-v27.html");
+    assert.equal(tools.find(t => t.name === "open_live_view")._meta.ui.resourceUri, "ui://gpt-us/live-view-v28.html");
+    assert.equal(tools.find(t => t.name === "open_live_view")._meta["openai/outputTemplate"], "ui://gpt-us/live-view-v28.html");
     assert.equal(tools.find(t => t.name === "open_live_view")._meta["openai/widgetAccessible"], true);
     assert.deepEqual(tools.find(t => t.name === "live_view_frame")._meta.ui.visibility, ["app"]);
     assert.deepEqual(tools.find(t => t.name === "live_view_state")._meta.ui.visibility, ["app"]);
@@ -71,7 +71,7 @@ test("private live-view resource, auth, monitor selection and frame delivery", a
     assert.match(smartResource.result.contents[0].text, /الخطوة التالية/);
     const smartOpened = await rpc(31, "tools/call", { name: "open_smart_panel", arguments: { task: "غيّر الصوت" } });
     assert.equal(smartOpened.result.structuredContent.phase, "idle");
-    const resource = await rpc(3, "resources/read", { uri: "ui://gpt-us/live-view-v27.html" });
+    const resource = await rpc(3, "resources/read", { uri: "ui://gpt-us/live-view-v28.html" });
     assert.match(resource.result.contents[0].text, /الكمبيوتر المباشر/);
     assert.match(resource.result.contents[0].text, /const embeddedState = null/);
     assert.equal(resource.result.contents[0].mimeType, "text/html;profile=mcp-app");
@@ -108,8 +108,21 @@ test("private live-view resource, auth, monitor selection and frame delivery", a
     for (let i = 0; i < 40 && !messages.some(item => item.binary && item.data.equals(webm)); i++) await new Promise(resolve => setTimeout(resolve, 25));
     assert.ok(messages.some(item => !item.binary && JSON.parse(item.data.toString()).type === "webm"), "browser stream metadata reaches viewer");
     assert.ok(messages.some(item => item.binary && item.data.equals(webm)), "browser WebM chunk reaches viewer");
+    const oldClosed = new Promise(resolve => live.once("close", code => resolve(code)));
+    const newest = new WebSocket(`ws://127.0.0.1:${port}/live?ticket=${ticket}&parallel=1`);
+    await new Promise((resolve, reject) => { newest.once("open", resolve); newest.once("error", reject); });
+    assert.equal(await oldClosed, 4002, "new viewer replaces old even with legacy parallel flag");
+    newest.send(JSON.stringify({type:"select",screen:0,mode:"jpeg"}));
+    await new Promise(resolve => setTimeout(resolve, 150));
+    newest.send(JSON.stringify({type:"pause"}));
+    await new Promise(resolve => setTimeout(resolve, 150));
+    const pausedCount = commands.filter(c=>c.command==="desktop_stream_frame").length;
+    await new Promise(resolve => setTimeout(resolve, 250));
+    assert.equal(commands.filter(c=>c.command==="desktop_stream_frame").length, pausedCount, "paused viewer stops capture requests");
+    const leaseClosed = new Promise(resolve => newest.once("close", code => resolve(code)));
+    newest.send(JSON.stringify({type:"heartbeat"}));
+    assert.equal(await leaseClosed, 4004, "missing heartbeat expires viewer lease");
     capture.close();
-    live.close();
     assert.equal(opened.result.structuredContent.monitors.length, 2);
     const recovered = await rpc(40, "tools/call", { name: "live_view_state", arguments: {} });
     assert.equal(recovered.result.structuredContent.monitors.length, 2);
