@@ -71,14 +71,14 @@ internal static partial class Program
     static async Task<object> DesktopControl(JsonElement args){
         RestoreTarget();var kind=S(args,"kind");RequirePermission("windows");
         if(kind=="list")return VisibleWindows().Select(h=>Safe(()=>WindowState(h),new{unavailable=true} as object)).ToArray();
-        if(kind=="active"){var target=SelectedWindow==IntPtr.Zero?null:Safe(()=>WindowState(TargetWindow()),null as object);return new{active=GetForegroundWindow()==IntPtr.Zero?null:WindowState(GetForegroundWindow()),target,targetValid=target!=null};}
+        if(kind=="active"){var target=SelectedWindow==IntPtr.Zero?null:Safe(()=>WindowState(TargetWindow()),null as object);return new{active=GetForegroundWindow()==IntPtr.Zero?null:WindowState(GetForegroundWindow()),target,targetElement=SelectedElementRef,targetValid=target!=null};}
         if(kind=="select"){
             IntPtr handle;
             if(Has(args,"hwnd"))handle=new IntPtr(args.GetProperty("hwnd").GetInt64());
             else {var matches=VisibleWindows().Where(h=>{GetWindowThreadProcessId(h,out var p);return p==I(args,"pid");}).ToArray();if(matches.Length!=1)throw new Exception("PID must identify exactly one visible window; use hwnd");handle=matches[0];}
             if(!IsWindowVisible(handle))throw new Exception("Target is not a visible window");
             GetWindowThreadProcessId(handle,out var pid);SelectedWindow=handle;SelectedProcess=(int)pid;SelectedProcessStart=Process.GetProcessById((int)pid).StartTime.ToUniversalTime().Ticks;
-            TargetLoaded=true;SaveTarget();if(B(args,"activate",true))await FocusWindow(handle);
+            SelectedElementRef=Has(args,"element")?args.GetProperty("element").Clone():null;TargetLoaded=true;SaveTarget();if(B(args,"activate",true))await FocusWindow(handle);
             return new{selected=true,window=WindowState(handle)};
         }
         if(kind=="capture"){if(B(args,"activate",true))await FocusWindow(TargetWindow());return CaptureTarget(args);}

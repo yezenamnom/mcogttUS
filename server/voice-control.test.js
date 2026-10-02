@@ -16,7 +16,7 @@ test('instruction editor API and voice batch: target, original images, one bridg
   assert.equal((await fetch(base+'/instructions')).status,401);
   const initial=await (await fetch(base+'/instructions',{headers:auth})).json();
   const invalid=await fetch(base+'/instructions',{method:'PUT',headers:auth,body:JSON.stringify({text:'# invalid',expectedHash:initial.sha256})});assert.equal(invalid.status,400);
-  const changed=initial.text.replace('Version: 1.1.1','Version: 1.2.0');
+  const changed=initial.text.replace('Version: 1.1.2','Version: 1.2.0');
   const saved=await (await fetch(base+'/instructions',{method:'PUT',headers:auth,body:JSON.stringify({text:changed,expectedHash:initial.sha256})})).json();assert.equal(saved.version,'1.2.0');assert.ok(saved.backup);
   async function rpc(id,method,params){const response=await fetch(base+'/mcp',{method:'POST',headers:{...auth,accept:'application/json, text/event-stream'},body:JSON.stringify({jsonrpc:'2.0',id,method,params})});assert.equal(response.status,200);const text=await response.text();return JSON.parse(text.startsWith('{')?text:text.split('\n').find(line=>line.startsWith('data:')).slice(5));}
   const init=await rpc(1,'initialize',{protocolVersion:'2025-03-26',capabilities:{},clientInfo:{name:'voice-test',version:'1'}});assert.match(init.result.instructions,/Version: 1.2.0/);
@@ -36,6 +36,6 @@ test('instruction editor API and voice batch: target, original images, one bridg
   assert.equal(batch.result.content.filter(item=>item.type==='image').length,3);
   const metadata=JSON.parse(batch.result.content.find(item=>item.type==='text').text);assert.equal(metadata.window.hwnd,123);assert.equal(metadata.evidence.windowImage.width,2560);assert.equal(metadata.evidence.crop.width,300);assert.ok(!JSON.stringify(metadata).includes('QUJD'));
   const state=await rpc(4,'tools/call',{name:'desktop_current_window',arguments:{}});assert.equal(JSON.parse(state.result.content[0].text).target.hwnd,123);
-  const reset=await fetch(base+'/instructions/reset',{method:'POST',headers:auth,body:JSON.stringify({expectedHash:saved.sha256})});assert.equal(reset.status,200);assert.equal((await reset.json()).version,'1.1.1');
+  const reset=await fetch(base+'/instructions/reset',{method:'POST',headers:auth,body:JSON.stringify({expectedHash:saved.sha256})});assert.equal(reset.status,200);assert.equal((await reset.json()).version,'1.1.2');
  }finally{socket?.close();child.kill();await new Promise(resolve=>child.exitCode!==null?resolve():child.once('exit',resolve));rmSync(dir,{recursive:true,force:true});}
 });

@@ -43,3 +43,12 @@ test('target commands serialize and failures release the queue',async()=>{
  await assert.rejects(first);assert.equal(await second,2);assert.deepEqual(events,['first','second']);
  }finally{rmSync(dir,{recursive:true,force:true});}
 });
+test('container replacement restores only an explicitly saved valid target and element',async()=>{
+ const dir=mkdtempSync(join(tmpdir(),'gpt-restore-'));try{
+ const store=new TargetState(join(dir,'targets.json'));
+ const restored=await store.resolve('desktop',async()=>({hwnd:42,element:{name:'Editor'},identity:{window:{hwnd:42}}}));
+ assert.equal(restored.hwnd,42);assert.equal(restored.element.name,'Editor');
+ assert.equal((await store.resolve('desktop',async()=>{throw Error('must reuse saved target')})).hwnd,42);
+ await assert.rejects(store.resolve('browser',async()=>null),/Select a persistent/);
+ }finally{rmSync(dir,{recursive:true,force:true});}
+});

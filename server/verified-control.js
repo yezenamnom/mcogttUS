@@ -6,6 +6,7 @@ export class TargetState {
  async run(domain,operation){const previous=this.queues.get(domain)||Promise.resolve();const current=previous.catch(()=>{}).then(operation);this.queues.set(domain,current);try{return await current;}finally{if(this.queues.get(domain)===current)this.queues.delete(domain);}}
  set(domain,target){this.state[domain]={...target,updatedAt:new Date().toISOString()};mkdirSync(dirname(this.path),{recursive:true});writeFileSync(this.path+'.tmp',JSON.stringify(this.state));renameSync(this.path+'.tmp',this.path);return this.state[domain];}
  get(domain){if(!this.state[domain])throw Error('Select a persistent '+domain+' target first');return this.state[domain];}
+ async resolve(domain,restore){if(this.state[domain])return this.state[domain];const target=await restore();if(!target)throw Error('Select a persistent '+domain+' target first');return this.set(domain,target);}
 }
 
 export function compareState(before,after,expect){

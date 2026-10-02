@@ -6,8 +6,9 @@ internal static partial class Program
 {
     static readonly string PersistentTargetPath=System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"ChatGPTDesktopBridge","target.json");
     static bool TargetLoaded;
-    static void SaveTarget(){Directory.CreateDirectory(System.IO.Path.GetDirectoryName(PersistentTargetPath)!);var h=TargetWindow();File.WriteAllText(PersistentTargetPath+".tmp",JsonSerializer.Serialize(new{hwnd=h.ToInt64(),pid=SelectedProcess,start=SelectedProcessStart,screen=Screen.FromHandle(h).DeviceName}));File.Move(PersistentTargetPath+".tmp",PersistentTargetPath,true);}
-    static void RestoreTarget(){if(TargetLoaded)return;TargetLoaded=true;if(!File.Exists(PersistentTargetPath))return;using var doc=JsonDocument.Parse(File.ReadAllText(PersistentTargetPath));var root=doc.RootElement;SelectedWindow=new IntPtr(root.GetProperty("hwnd").GetInt64());SelectedProcess=root.GetProperty("pid").GetInt32();SelectedProcessStart=root.GetProperty("start").GetInt64();}
+    static JsonElement? SelectedElementRef;
+    static void SaveTarget(){Directory.CreateDirectory(System.IO.Path.GetDirectoryName(PersistentTargetPath)!);var h=TargetWindow();File.WriteAllText(PersistentTargetPath+".tmp",JsonSerializer.Serialize(new{hwnd=h.ToInt64(),pid=SelectedProcess,start=SelectedProcessStart,screen=Screen.FromHandle(h).DeviceName,element=SelectedElementRef}));File.Move(PersistentTargetPath+".tmp",PersistentTargetPath,true);}
+    static void RestoreTarget(){if(TargetLoaded)return;TargetLoaded=true;if(!File.Exists(PersistentTargetPath))return;using var doc=JsonDocument.Parse(File.ReadAllText(PersistentTargetPath));var root=doc.RootElement;SelectedWindow=new IntPtr(root.GetProperty("hwnd").GetInt64());SelectedProcess=root.GetProperty("pid").GetInt32();SelectedProcessStart=root.GetProperty("start").GetInt64();SelectedElementRef=root.TryGetProperty("element",out var element)&&element.ValueKind==JsonValueKind.Object?element.Clone():null;}
     static AutomationElement? FindTargetElement(JsonElement args){
         var root=AutomationElement.FromHandle(TargetWindow());
         var id=S(args,"automationId");var name=S(args,"name");

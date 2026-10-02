@@ -1,7 +1,7 @@
 let ws = null;
 let reconnectTimer = null;
 let pingTimer = null;
-const EXT_VERSION = "0.12.2";
+const EXT_VERSION = "0.12.3";
 const domState = new Map();
 const cdpAttached = new Set();
 const networkState = new Map();
@@ -133,7 +133,7 @@ async function chooseWorkingTab(args){
  if(candidates.length!==1)throw new Error("Target must identify exactly one tab");
  const tab=candidates[0];let {targetSession}=await chrome.storage.session.get("targetSession");
  if(!targetSession){targetSession=crypto.randomUUID();await chrome.storage.session.set({targetSession});}
- await chrome.storage.local.set({workingTarget:{tabId:tab.id,windowId:tab.windowId,session:targetSession,url:tab.url}});
+ await chrome.storage.local.set({workingTarget:{tabId:tab.id,windowId:tab.windowId,session:targetSession,url:tab.url,element:args.element||null}});
  return {selected:true,tab:{id:tab.id,windowId:tab.windowId,title:tab.title,url:tab.url},session:targetSession};
 }
 async function targetTab(args={}) {
@@ -729,7 +729,7 @@ async function executeCommand(command,args={}){
   const tab=async()=>await targetTab(args);
   switch(command){
     case "select_working_tab":return await chooseWorkingTab(args);
-    case "get_working_tab":{const t=await pinnedTab();return t?{selected:true,tab:{id:t.id,windowId:t.windowId,url:t.url,title:t.title}}:{selected:false};}
+    case "get_working_tab":{const t=await pinnedTab();const {workingTarget}=await chrome.storage.local.get('workingTarget');return t?{selected:true,tab:{id:t.id,windowId:t.windowId,url:t.url,title:t.title},element:workingTarget?.element||null}:{selected:false};}
     case "clear_working_tab":await chrome.storage.local.remove("workingTarget");return {cleared:true};
     case "layer_observe":{const t=await tab();return {tabId:t.id,...await runInTab(t.id,layeredDOM,[{...args,observe:true}])};}
     case "layer_act":{const t=await tab();return await browserLayerAct(t.id,args);}

@@ -204,7 +204,7 @@ function callDesktop(command, args = {}, timeoutMs = 30000) {
 }
 
 function makeMcpServer() {
-  const server = new McpServer({ name: "gpt-us-browser-desktop", version: "0.8.1" }, { instructions: instructionStore.get().text });
+  const server = new McpServer({ name: "gpt-us-browser-desktop", version: "0.8.2" }, { instructions: instructionStore.get().text });
 
   // Some ChatGPT connector hosts forward the app-qualified tool name back to
   // the MCP server (for example `gpt_us.bridge_info`) instead of stripping the
@@ -642,10 +642,10 @@ function makeMcpServer() {
     let selected;
     if(args.domain==="desktop"){
       if(args.hwnd===undefined&&args.pid===undefined)throw Error("Supply hwnd or pid");
-      selected=await callDesktop("desktop_control",{kind:"select",hwnd:args.hwnd,pid:args.pid,activate:false});
+      selected=await callDesktop("desktop_control",{kind:"select",hwnd:args.hwnd,pid:args.pid,element:args.element,activate:false});
     }else{
       if(args.tabId===undefined)throw Error("Supply exact tabId");
-      selected=await callBrowser("select_working_tab",{tabId:args.tabId});
+      selected=await callBrowser("select_working_tab",{tabId:args.tabId,element:args.element});
     }
     const state=targets.set(args.domain,{...args,identity:selected});
     return {content:[{type:"text",text:JSON.stringify(state)}]};
@@ -658,7 +658,16 @@ function makeMcpServer() {
     expect:z.object({path:z.enum(["window.active","window.minimized","window.maximized","window.title","window","element.name","element.value","element.selected","element","url","title","text","scrollY","cursor.x","cursor.y"]),operator:z.enum(["equals","contains","absent","changed"]),value:z.any().optional()})
   }).refine(a=>!a.allowVision||(a.x!==undefined&&a.y!==undefined),"Vision fallback needs inspected x/y");
   async function executeVerifiedAction(args){
-    const target=targets.get(args.domain);const params={...target.element,...args};
+    const target=await targets.resolve(args.domain,async()=>{
+      if(args.domain==='desktop'){
+        const saved=await callDesktop('desktop_control',{kind:'active'});
+        if(!saved.targetValid||!saved.target?.hwnd)return null;
+        return {hwnd:saved.target.hwnd,element:saved.targetElement||undefined,identity:{window:saved.target}};
+      }
+      const saved=await callBrowser('get_working_tab',{});
+      if(!saved.selected||!saved.tab?.id)return null;
+      return {tabId:saved.tab.id,element:saved.element||undefined,identity:{tab:saved.tab}};
+    });const params={...target.element,...args};
     const result=await verifiedControl({
       expect:args.expect,layers:args.domain==="desktop"?(args.action==='click'||args.action==='type'||args.action==='select'?['uia','vision']:['os']):["dom","accessibility","cdp","vision"],
       observe:async()=>{
@@ -874,7 +883,7 @@ const httpServer = http.createServer(async (req, res) => {
     res.end(JSON.stringify({
       ok: true,
       service: "comet-chatgpt-bridge",
-      version: "0.8.1",
+      version: "0.8.2",
       mcp: "ready",
       browserConnected: !!browserSocket && browserSocket.readyState === WebSocket.OPEN,
       browserConnectedAt,
@@ -887,7 +896,7 @@ const httpServer = http.createServer(async (req, res) => {
 
   if (url.pathname === "/" && req.method === "GET") {
     res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({ service: "comet-chatgpt-bridge", version: "0.8.1", status: "ok", mcp: "/mcp" }));
+    res.end(JSON.stringify({ service: "comet-chatgpt-bridge", version: "0.8.2", status: "ok", mcp: "/mcp" }));
     return;
   }
 
@@ -1138,7 +1147,7 @@ wss.on("connection", (socket, req) => {
 });
 
 httpServer.listen(PORT, "0.0.0.0", () => {
-  console.log(`Comet ChatGPT Bridge v0.8.1 listening on 0.0.0.0:${PORT}`);
+  console.log(`Comet ChatGPT Bridge v0.8.2 listening on 0.0.0.0:${PORT}`);
   console.log("MCP v2 handler ready at /mcp | WSS /browser + /desktop + /capture | health /health");
 });
 
