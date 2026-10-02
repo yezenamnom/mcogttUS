@@ -1,14 +1,16 @@
 {
   "manifest_version": 3,
   "name": "Comet ChatGPT Bridge",
-  "version": "0.9.4",
+  "version": "0.10.0",
   "description": "Browser bridge with configurable cursor, connection settings, deep DOM, CDP and resilient interaction fallbacks.",
   "permissions": [
     "tabs",
     "scripting",
     "storage",
     "activeTab",
-    "debugger"
+    "debugger",
+    "desktopCapture",
+    "offscreen"
   ],
   "host_permissions": [
     "<all_urls>"
@@ -17,9 +19,11 @@
     "service_worker": "background.js",
     "type": "module"
   },
+  "web_accessible_resources": [{"resources":["offscreen.html"],"matches":["<all_urls>"]}],
   "options_page": "options.html",
   "content_scripts": [{"matches":["<all_urls>"],"js":["activity-wave.js"],"run_at":"document_idle"}],
   "action": {
     "default_title": "Comet ChatGPT Bridge"
   }
 }
+
