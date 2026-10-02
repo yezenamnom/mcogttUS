@@ -14,6 +14,7 @@
     (() => {
       const status=document.getElementById('status');
       let started=false;
+      let retryTimer=null;
       function snapshotFromHost() {
         const host=window.openai;
         const metadata=host?.toolResponseMetadata;
@@ -31,6 +32,10 @@
           return;
         }
         try {
+          if(host.widgetState?.privateContent?.captureId===snapshot.id) {
+            status.textContent=`صورة الشاشة ${snapshot.screen+1} مرفقة بالمحادثة.`;
+            return;
+          }
           const binary=atob(snapshot.data);
           const bytes=new Uint8Array(binary.length);
           for(let i=0;i<binary.length;i++) bytes[i]=binary.charCodeAt(i);
@@ -40,19 +45,31 @@
           if(!fileId) throw new Error('لم يُرجع ChatGPT معرّف الصورة');
           host.setWidgetState({
             modelContent:`لقطة جديدة للشاشة ${snapshot.screen+1} جاهزة للتحليل. استند إلى الصورة المرفقة، لا إلى وصف سابق.`,
-            privateContent:{screen:snapshot.screen},
+            privateContent:{screen:snapshot.screen,captureId:snapshot.id},
             imageIds:[fileId]
           });
           status.textContent=`أُرفقت صورة الشاشة ${snapshot.screen+1} بالمحادثة.`;
-          await host.sendFollowUpMessage({
-            prompt:`حلّل الصورة المرفقة للشاشة ${snapshot.screen+1} وأجب عن سؤال المستخدم الأخير حول ما يظهر فيها. الصورة مرفقة الآن؛ لا تطلب لقطة أخرى في هذه الرسالة. إن لم تكن الصورة مرئية لك، قل ذلك بوضوح.`,
-            scrollToBottom:false
-          });
+          async function sendWhenReady(attempt=0) {
+            try {
+              await host.sendFollowUpMessage({
+                prompt:`حلّل الصورة المرفقة للشاشة ${snapshot.screen+1} وأجب عن سؤال المستخدم الأخير حول ما يظهر فيها. الصورة مرفقة الآن؛ لا تطلب لقطة أخرى في هذه الرسالة. إن لم تكن الصورة مرئية لك، قل ذلك بوضوح.`,
+                scrollToBottom:false
+              });
+              status.textContent=`أُرسلت صورة الشاشة ${snapshot.screen+1} للتحليل.`;
+            } catch(error) {
+              if(/composer is unavailable/i.test(String(error?.message))&&attempt<20) {
+                status.textContent='الصورة مرفقة؛ بانتظار انتهاء رد ChatGPT لإرسالها للتحليل…';
+                retryTimer=setTimeout(()=>sendWhenReady(attempt+1),1500);
+              } else status.textContent=`الصورة مرفقة، لكن تعذّر إرسال طلب التحليل: ${error?.message||'خطأ غير معروف'}`;
+            }
+          }
+          await sendWhenReady();
         } catch(error) {
           status.textContent=`تعذّر إرفاق الصورة: ${error?.message||'خطأ غير معروف'}`;
         }
       }
       window.addEventListener('openai:set_globals',attach);
+      window.addEventListener('pagehide',()=>clearTimeout(retryTimer));
       attach();
     })();
   </script>
