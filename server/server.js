@@ -20,10 +20,13 @@ const HOSTINGER_SFTP_USER = process.env.HOSTINGER_SFTP_USER || "";
 const HOSTINGER_SFTP_PRIVATE_KEY = (process.env.HOSTINGER_SFTP_PRIVATE_KEY || "").replace(/\\n/g, "\n");
 const HOSTINGER_SFTP_DIR = process.env.HOSTINGER_SFTP_DIR || "";
 const HOSTINGER_SCREENSHOT_BASE_URL = (process.env.HOSTINGER_SCREENSHOT_BASE_URL || "").replace(/\/$/, "");
-const LIVE_VIEW_URI = "ui://gpt-us/live-view-v10.html";
+// ChatGPT treats the resource URI as the component cache key. Keep each
+// published component immutable and bump the URI whenever its HTML changes.
+const LIVE_VIEW_URI = "ui://gpt-us/live-view-v18.html";
 const PUBLIC_ORIGIN = (process.env.OAUTH_ISSUER || "https://mcogttus-production.up.railway.app").replace(/\/$/, "");
 const LIVE_WS_ORIGIN = PUBLIC_ORIGIN.replace(/^https:/, "wss:").replace(/^http:/, "ws:");
 const LIVE_VIEW_HTML = readFileSync(new URL("./live-view.html", import.meta.url), "utf8");
+const OPERATING_RULES = readFileSync(new URL("./OPERATING_RULES_AR.md", import.meta.url), "utf8");
 const SMART_URI = "ui://gpt-us/smart-actions.html";
 const SMART_HTML = readFileSync(new URL("./smart-actions.html", import.meta.url), "utf8");
 let smartState = { revision: 0, phase: "idle", options: [], title: "الكمبيوتر" };
@@ -38,6 +41,8 @@ if (!BRIDGE_TOKEN) console.warn("WARNING: BRIDGE_TOKEN is not set.");
 
 let browserSocket = null;
 let browserConnectedAt = null;
+let captureSocket = null;
+let browserCaptureState = { active: false };
 let desktopSocket = null;
 let desktopConnectedAt = null;
 const pending = new Map();
@@ -47,6 +52,7 @@ const liveWss = new WebSocketServer({ noServer: true });
 const liveTickets = new Map();
 const livePushSubscribers = new Set();
 let activeLiveViewer = null;
+let liveMonitorCache = null;
 const desktopObservationCache = new Map();
 let sftpClient = null;
 let sftpConnectPromise = null;
@@ -56,7 +62,11 @@ function issueLiveTicket() {
   const ticket = crypto.randomBytes(32).toString("base64url");
   const streamExpiresAt = Date.now() + 5 * 60 * 1000;
   liveTickets.set(ticket, streamExpiresAt);
-  return { streamUrl: `${LIVE_WS_ORIGIN}/live?ticket=${ticket}`, streamExpiresAt };
+  return {
+    streamUrl: `${LIVE_WS_ORIGIN}/live?ticket=${ticket}`,
+    viewerUrl: `${PUBLIC_ORIGIN}/viewer?ticket=${ticket}`,
+    streamExpiresAt
+  };
 }
 
 function validLiveTicket(ticket) {
@@ -184,7 +194,7 @@ function callDesktop(command, args = {}, timeoutMs = 30000) {
 }
 
 function makeMcpServer() {
-  const server = new McpServer({ name: "gpt-us-browser-desktop", version: "0.7.22" });
+  const server = new McpServer({ name: "gpt-us-browser-desktop", version: "0.7.31" }, { instructions: OPERATING_RULES });
 
   // Some ChatGPT connector hosts forward the app-qualified tool name back to
   // the MCP server (for example `gpt_us.bridge_info`) instead of stripping the
@@ -289,25 +299,35 @@ function makeMcpServer() {
     return { content: [{ type: "text", text: JSON.stringify({ found: !!state, options: state?.options || [], usage: state?.usage || {} }) }] };
   });
 
-  server.registerResource("gpt-us-live-view", LIVE_VIEW_URI, {
-    description: "Private live desktop viewer inside ChatGPT",
-    mimeType: "text/html;profile=mcp-app"
-  }, async () => ({ contents: [{
-    uri: LIVE_VIEW_URI,
+  const liveResource = uri => async () => ({ contents: [{
+    uri,
     mimeType: "text/html;profile=mcp-app",
-    text: LIVE_VIEW_HTML.replace('__GPT_US_BOOTSTRAP_STATE__', JSON.stringify(await liveViewState()).replace(/</g, '\\u003c')),
+    // Resource contents must stay byte-for-byte stable for a given URI. Fresh
+    // connection state and private tickets arrive in the opening tool result
+    // (and through live_view_state), never inside the cached HTML resource.
+    text: LIVE_VIEW_HTML.replace('__GPT_US_BOOTSTRAP_STATE__', 'null'),
     _meta: {
       ui: { csp: { connectDomains: [LIVE_WS_ORIGIN], resourceDomains: [] } },
-      "openai/ui": { availableDisplayModes: ["inline", "fullscreen"], preferredDisplayMode: "fullscreen" },
+      "openai/ui": { availableDisplayModes: ["inline", "fullscreen"], preferredDisplayMode: "inline" },
       "openai/widgetCSP": { connect_domains: [LIVE_WS_ORIGIN], resource_domains: [] }
     }
-  }] }));
+  }] });
+  const liveResourceConfig = { description: "Private live desktop viewer inside ChatGPT", mimeType: "text/html;profile=mcp-app" };
+  server.registerResource("gpt-us-live-view", LIVE_VIEW_URI, liveResourceConfig, liveResource(LIVE_VIEW_URI));
+  server.registerResource("gpt-us-live-view-stable-compat", "ui://gpt-us/live-view.html", liveResourceConfig, liveResource("ui://gpt-us/live-view.html"));
+  server.registerResource("gpt-us-live-view-v17-compat", "ui://gpt-us/live-view-v17.html", liveResourceConfig, liveResource("ui://gpt-us/live-view-v17.html"));
+  server.registerResource("gpt-us-live-view-v16-compat", "ui://gpt-us/live-view-v16.html", liveResourceConfig, liveResource("ui://gpt-us/live-view-v16.html"));
+  server.registerResource("gpt-us-live-view-v15-compat", "ui://gpt-us/live-view-v15.html", liveResourceConfig, liveResource("ui://gpt-us/live-view-v15.html"));
+  server.registerResource("gpt-us-live-view-v14-compat", "ui://gpt-us/live-view-v14.html", liveResourceConfig, liveResource("ui://gpt-us/live-view-v14.html"));
+  server.registerResource("gpt-us-live-view-v13-compat", "ui://gpt-us/live-view-v13.html", liveResourceConfig, liveResource("ui://gpt-us/live-view-v13.html"));
+  server.registerResource("gpt-us-live-view-v12-compat", "ui://gpt-us/live-view-v12.html", liveResourceConfig, liveResource("ui://gpt-us/live-view-v12.html"));
+  server.registerResource("gpt-us-live-view-v11-compat", "ui://gpt-us/live-view-v11.html", liveResourceConfig, liveResource("ui://gpt-us/live-view-v11.html"));
+  server.registerResource("gpt-us-live-view-v10-compat", "ui://gpt-us/live-view-v10.html", liveResourceConfig, liveResource("ui://gpt-us/live-view-v10.html"));
 
-  let liveMonitorCache = null;
   async function liveViewState() {
     if (!desktopSocket || desktopSocket.readyState !== WebSocket.OPEN) {
       liveMonitorCache = null;
-      return { connected: false, monitors: [], reason: "Windows desktop agent is offline" };
+      return { connected: !!(captureSocket?.readyState === WebSocket.OPEN), desktopConnected: false, browserConnected: !!(browserSocket?.readyState === WebSocket.OPEN), browserCapture: browserCaptureState, monitors: [], reason: "Windows desktop agent is offline" , ...issueLiveTicket() };
     }
     const monitors = await callDesktop("desktop_monitors", {}, 15000);
     const safeMonitors = Array.isArray(monitors) ? monitors.map(m => ({
@@ -315,25 +335,36 @@ function makeMcpServer() {
       width: Number(m.width), height: Number(m.height), primary: !!m.primary
     })).filter(m => Number.isInteger(m.index) && m.index >= 0 && m.index < 16) : [];
     liveMonitorCache = { socket: desktopSocket, monitors: safeMonitors, at: Date.now() };
-    return { connected: true, monitors: safeMonitors, ...issueLiveTicket() };
+    return { connected: true, desktopConnected: true, browserConnected: !!(browserSocket?.readyState === WebSocket.OPEN), browserCapture: browserCaptureState, monitors: safeMonitors, ...issueLiveTicket() };
   }
 
   server.registerTool("open_live_view", {
-    description: "Open a private live viewer for the connected Windows computer inside ChatGPT. The viewer can show either monitor and stop at any time. Use this when the user asks to see their computer live; no frames are posted to a public URL.",
+    description: "Open a private live viewer for the connected Windows computer inside ChatGPT. Always include the returned HTTPS viewerUrl as a clickable fallback link in your reply. Never replace it with a chatgpt.com/plugins URL.",
     inputSchema: z.object({}),
-    _meta: { ui: { resourceUri: LIVE_VIEW_URI } }
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    _meta: {
+      ui: { resourceUri: LIVE_VIEW_URI },
+      "openai/outputTemplate": LIVE_VIEW_URI,
+      "openai/widgetAccessible": true
+    }
   }, async () => {
     const state = await liveViewState();
     return {
-      content: [{ type: "text", text: state.connected ? `Private live view ready. ${state.monitors.length} monitor(s) available.` : "Windows desktop agent is offline." }],
-      structuredContent: state
+      content: [{ type: "text", text: state.connected ? `Private live view ready. ${state.monitors.length} monitor(s) available. Private fallback URL: ${state.viewerUrl}` : "Windows desktop agent is offline." }],
+      structuredContent: state,
+      _meta: { ui: { resourceUri: LIVE_VIEW_URI }, "openai/outputTemplate": LIVE_VIEW_URI }
     };
   });
 
   server.registerTool("live_view_state", {
     description: "App-only live-view connection and monitor state for recovery when the opening tool result was missed.",
-    inputSchema: z.object({}), _meta: { ui: { visibility: ["app"] } }
+    inputSchema: z.object({}),
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    _meta: { ui: { visibility: ["app"] }, "openai/widgetAccessible": true }
   }, async () => ({ content: [{ type: "text", text: "Live view state delivered to viewer." }], structuredContent: await liveViewState() }));
+
+  server.registerTool("browser_capture_status", { description:"Report whether Chrome/Comet is sending a user-selected tab, window, or desktop stream.", inputSchema:z.object({}) }, async()=>({content:[{type:"text",text:JSON.stringify(await callBrowser("browser_capture_status",{}))}]}));
+  server.registerTool("browser_capture_stop", { description:"Stop the active Chrome/Comet capture stream.", inputSchema:z.object({}) }, async()=>({content:[{type:"text",text:JSON.stringify(await callBrowser("browser_capture_stop",{}))}]}));
 
   server.registerTool("live_view_frame", {
     description: "Fetch one private compressed desktop frame for the live-view app. App-only: frame bytes are not included in the model-visible response.",
@@ -580,7 +611,7 @@ function makeMcpServer() {
     return {content:[{type:"text",text:JSON.stringify({result,calibration:{...match,scaleX:sx,scaleY:sy},calibratedEveryAction:true})}]};
   });
   server.registerTool("desktop_fast_batch",{
-    description:"Execute up to 12 safe Windows mouse/keyboard/window actions in one bridge round-trip, stopping on the first failure. Faster than separate calls. No screenshots between move and click. Use when the target is known; observe again after a layout change.",
+    description:"Execute up to 12 safe Windows mouse/keyboard/window actions in one bridge round-trip, stopping on the first failure. For user-requested actions: act first, then verify the final state with desktop_observe or desktop_windows. Never claim success from this tool alone. When verified, answer only 'تم' unless the user asked a question or requested a report.",
     inputSchema:z.object({actions:z.array(z.object({command:z.enum(["desktop_mouse_action","desktop_move_mouse","desktop_click","desktop_scroll","desktop_type_text","desktop_key_combo","desktop_window_activate","desktop_window_minimize","desktop_window_maximize","desktop_window_restore"]),args:z.record(z.string(),z.any()).optional()})).min(1).max(12)})
   },async ({actions})=>desktopText("desktop_mouse_action",{kind:"fast_batch",actions},45000));
   server.registerTool("desktop_workspace_report",{description:"Save timestamped desktop file/window/monitor metadata locally; requires read and write permissions. Not a live pixel/element map.",inputSchema:z.object({})},async()=>desktopText("desktop_mouse_action",{kind:"report"}));
@@ -591,20 +622,21 @@ function makeMcpServer() {
   });
   server.registerTool("desktop_report_latest",{description:"Read the most recently saved local workspace or browser report. Use it for a fast starting point, then refresh the live screen or page before clicking coordinates because saved positions can become stale.",inputSchema:z.object({kind:z.enum(["workspace","browser"]).default("workspace")})},async args=>desktopText("desktop_mouse_action",{kind:"report_latest",reportKind:args.kind}));
   server.registerTool("desktop_run_command",{description:"Run a Windows Command Prompt command on the owner's computer only when the separate persistent 'commands' permission is enabled in the Windows agent. Prefer dedicated read-only tools; inspect command and consequences before use. Limited to 30 seconds and capped output.",inputSchema:z.object({command:z.string().min(1).max(4000),timeoutMs:z.number().int().min(1000).max(30000).optional()})},async args=>desktopText("desktop_mouse_action",{kind:"run_command",...args},35000));
-  server.registerTool("desktop_screen_size",{description:"Get the Windows virtual desktop dimensions.",inputSchema:z.object({})},async()=>desktopText("desktop_screen_size"));
-  server.registerTool("desktop_monitors",{description:"List Windows monitors with index, primary flag and coordinates.",inputSchema:z.object({})},async()=>desktopText("desktop_monitors"));
-  server.registerTool("desktop_clipboard_get",{description:"Read text from the Windows clipboard when clipboard permission is enabled.",inputSchema:z.object({})},async()=>desktopText("desktop_clipboard_get"));
+  server.registerTool("desktop_screen_size",{description:"Get the Windows virtual desktop dimensions.",inputSchema:z.object({}),annotations:{readOnlyHint:true,destructiveHint:false,idempotentHint:true,openWorldHint:false}},async()=>desktopText("desktop_screen_size"));
+  server.registerTool("desktop_monitors",{description:"List Windows monitors with index, primary flag and coordinates.",inputSchema:z.object({}),annotations:{readOnlyHint:true,destructiveHint:false,idempotentHint:true,openWorldHint:false}},async()=>desktopText("desktop_monitors"));
+  server.registerTool("desktop_clipboard_get",{description:"Read text from the Windows clipboard when clipboard permission is enabled.",inputSchema:z.object({}),annotations:{readOnlyHint:true,destructiveHint:false,idempotentHint:true,openWorldHint:false}},async()=>desktopText("desktop_clipboard_get"));
   server.registerTool("desktop_clipboard_set",{description:"Set Windows clipboard text when clipboard permission is enabled.",inputSchema:z.object({text:z.string().max(20000)})},async args=>desktopText("desktop_clipboard_set",args));
-  server.registerTool("desktop_windows",{description:"List visible top-level Windows application windows.",inputSchema:z.object({})},async()=>desktopText("desktop_windows"));
-  server.registerTool("desktop_processes",{description:"List Windows processes.",inputSchema:z.object({})},async()=>desktopText("desktop_processes"));
-  server.registerTool("desktop_system_info",{description:"Read basic Windows system and drive information.",inputSchema:z.object({})},async()=>desktopText("desktop_system_info"));
-  server.registerTool("desktop_screenshot",{description:"Capture the full Windows desktop.",inputSchema:z.object({})},async()=>{
+  server.registerTool("desktop_windows",{description:"List visible top-level Windows application windows. Use this before window actions to match the exact requested app by process name/title, and again afterward to verify the result. Do not substitute a similarly positioned icon or window.",inputSchema:z.object({}),annotations:{readOnlyHint:true,destructiveHint:false,idempotentHint:true,openWorldHint:false}},async()=>desktopText("desktop_windows"));
+  server.registerTool("desktop_processes",{description:"List Windows processes.",inputSchema:z.object({}),annotations:{readOnlyHint:true,destructiveHint:false,idempotentHint:true,openWorldHint:false}},async()=>desktopText("desktop_processes"));
+  server.registerTool("desktop_system_info",{description:"Read basic Windows system and drive information.",inputSchema:z.object({}),annotations:{readOnlyHint:true,destructiveHint:false,idempotentHint:true,openWorldHint:false}},async()=>desktopText("desktop_system_info"));
+  server.registerTool("desktop_screenshot",{description:"Capture the full Windows desktop.",inputSchema:z.object({}),annotations:{readOnlyHint:true,destructiveHint:false,idempotentHint:true,openWorldHint:false}},async()=>{
     const shot=await callDesktop("desktop_screenshot",{},30000);
     return {content:[{type:"image",data:shot.data,mimeType:shot.mimeType||"image/png"},{type:"text",text:JSON.stringify({x:shot.x,y:shot.y,width:shot.width,height:shot.height})}]};
   });
   server.registerTool("desktop_observe",{
-    description:"Smartly observe one Windows monitor using a fast compressed frame. Compares a tiny visual fingerprint with the previous observation and can omit an unchanged image to reduce latency and tokens. Use after actions that may change layout; use desktop_fast_batch between observations.",
-    inputSchema:z.object({screen:z.number().int().min(0).max(15).default(0),onlyIfChanged:z.boolean().default(true),threshold:z.number().min(0).max(1).default(0.015),width:z.number().int().min(640).max(1920).default(1280),quality:z.number().int().min(25).max(85).default(58)})
+    description:"Smartly observe one Windows monitor using a fast compressed frame. REQUIRED after a user-requested visible action before claiming completion. If the expected app or state is not visible, retry or report failure; never guess. After verified success answer only 'تم' unless the user asked a question or requested a report.",
+    inputSchema:z.object({screen:z.number().int().min(0).max(15).default(0),onlyIfChanged:z.boolean().default(true),threshold:z.number().min(0).max(1).default(0.015),width:z.number().int().min(640).max(1920).default(1280),quality:z.number().int().min(25).max(85).default(58)}),
+    annotations:{readOnlyHint:true,destructiveHint:false,idempotentHint:true,openWorldHint:false}
   },async ({screen,onlyIfChanged,threshold,width,quality})=>{
     const shot=await getFastDesktopFrame(screen,width,quality,20000);
     const fingerprint=await sharp(shot.buffer).resize(32,18,{fit:"fill"}).greyscale().raw().toBuffer();
@@ -619,7 +651,7 @@ function makeMcpServer() {
     return {content,structuredContent:metadata};
   });
   server.registerTool("desktop_mouse_action",{
-    description:"One real Windows mouse operation: verified move then click/right/double/scroll, or drag. Coordinates are physical screen pixels including negative monitor origins. Uses one desktop round-trip. Optionally returns one screenshot AFTER the completed action. Do not capture between movement and click.",
+    description:"One real Windows mouse operation. Coordinates are physical screen pixels including negative monitor origins. For a final click set screenshotAfter=true, inspect that returned image, and only then claim success. Never infer success merely because the click was sent. After verified success answer only 'تم' unless the user requested explanation or a report.",
     inputSchema:z.object({kind:z.enum(["move","click","right","double","drag","scroll"]),x:z.number().int(),y:z.number().int(),toX:z.number().int().optional(),toY:z.number().int().optional(),durationMs:z.number().int().min(0).max(10000).optional(),button:z.enum(["left","middle","right"]).optional(),delta:z.number().int().min(-12000).max(12000).optional(),horizontal:z.boolean().optional(),screenshotAfter:z.boolean().optional(),settleMs:z.number().int().min(0).max(2000).optional()})
   },async args=>{
     const result=await callDesktop("desktop_mouse_action",args,30000);
@@ -658,9 +690,9 @@ function makeMcpServer() {
   server.registerTool("desktop_copy_directory",{description:"Recursively copy a Windows directory.",inputSchema:z.object({source:z.string(),destination:z.string(),overwrite:z.boolean().optional()})},async args=>desktopText("desktop_copy_directory",args,60000));
   server.registerTool("desktop_open_path",{description:"Open a Windows file, folder, or ZIP path with its default application.",inputSchema:z.object({path:z.string()})},async args=>desktopText("desktop_open_path",args));
   server.registerTool("desktop_scroll",{description:"Scroll with the real Windows mouse wheel, vertically or horizontally.",inputSchema:z.object({delta:z.number().int().min(-12000).max(12000).optional(),horizontal:z.boolean().optional()})},async args=>desktopText("desktop_scroll",args));
-  server.registerTool("desktop_window_activate",{description:"Bring a top-level Windows application window to the foreground by PID.",inputSchema:z.object({pid:z.number().int()})},async args=>desktopText("desktop_window_activate",args));
-  server.registerTool("desktop_window_minimize",{description:"Minimize a top-level Windows application window by PID.",inputSchema:z.object({pid:z.number().int()})},async args=>desktopText("desktop_window_minimize",args));
-  server.registerTool("desktop_window_maximize",{description:"Maximize a top-level Windows application window by PID.",inputSchema:z.object({pid:z.number().int()})},async args=>desktopText("desktop_window_maximize",args));
+  server.registerTool("desktop_window_activate",{description:"Bring an exact top-level Windows window to the foreground by PID. Obtain the PID from desktop_windows by matching the requested app name/title; verify afterward before saying تم.",inputSchema:z.object({pid:z.number().int()})},async args=>desktopText("desktop_window_activate",args));
+  server.registerTool("desktop_window_minimize",{description:"Minimize an exact top-level Windows window by PID. Obtain the PID from desktop_windows and verify afterward before saying تم.",inputSchema:z.object({pid:z.number().int()})},async args=>desktopText("desktop_window_minimize",args));
+  server.registerTool("desktop_window_maximize",{description:"Maximize an exact top-level Windows window by PID. Obtain the PID from desktop_windows and verify afterward before saying تم.",inputSchema:z.object({pid:z.number().int()})},async args=>desktopText("desktop_window_maximize",args));
   server.registerTool("desktop_window_restore",{description:"Restore a top-level Windows application window by PID.",inputSchema:z.object({pid:z.number().int()})},async args=>desktopText("desktop_window_restore",args));
   server.registerTool("desktop_window_move",{description:"Move/resize a top-level Windows application window by PID.",inputSchema:z.object({pid:z.number().int(),x:z.number().int(),y:z.number().int(),width:z.number().int(),height:z.number().int()})},async args=>desktopText("desktop_window_move",args));
 
@@ -680,7 +712,7 @@ const httpServer = http.createServer(async (req, res) => {
     res.end(JSON.stringify({
       ok: true,
       service: "comet-chatgpt-bridge",
-      version: "0.7.22",
+      version: "0.7.31",
       mcp: "ready",
       browserConnected: !!browserSocket && browserSocket.readyState === WebSocket.OPEN,
       browserConnectedAt,
@@ -693,7 +725,7 @@ const httpServer = http.createServer(async (req, res) => {
 
   if (url.pathname === "/" && req.method === "GET") {
     res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({ service: "comet-chatgpt-bridge", version: "0.7.22", status: "ok", mcp: "/mcp" }));
+    res.end(JSON.stringify({ service: "comet-chatgpt-bridge", version: "0.7.31", status: "ok", mcp: "/mcp" }));
     return;
   }
 
@@ -704,6 +736,30 @@ const httpServer = http.createServer(async (req, res) => {
       res.end(JSON.stringify({error:"Unauthorized"}));return;
     }
     void nodeMcpHandler(req, res);
+    return;
+  }
+
+  if (url.pathname === "/viewer" && req.method === "GET") {
+    if (!validLiveTicket(url.searchParams.get("ticket") || "")) {
+      res.writeHead(401, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
+      res.end("<!doctype html><meta charset=\"utf-8\"><title>GPT US</title><p>انتهت صلاحية رابط العرض. اطلب فتح العرض المباشر مرة أخرى من ChatGPT.</p>");
+      return;
+    }
+    const state = {
+      connected: !!desktopSocket && desktopSocket.readyState === WebSocket.OPEN,
+      desktopConnected: !!desktopSocket && desktopSocket.readyState === WebSocket.OPEN,
+      browserConnected: !!browserSocket && browserSocket.readyState === WebSocket.OPEN,
+      browserCapture: browserCaptureState,
+      monitors: liveMonitorCache?.monitors || [],
+      ...issueLiveTicket()
+    };
+    res.writeHead(200, {
+      "content-type": "text/html; charset=utf-8",
+      "cache-control": "no-store, no-cache, must-revalidate",
+      pragma: "no-cache",
+      "content-security-policy": `default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data: blob:; media-src blob:; connect-src ${LIVE_WS_ORIGIN}`
+    });
+    res.end(LIVE_VIEW_HTML.replace('__GPT_US_BOOTSTRAP_STATE__', JSON.stringify(state).replace(/</g, '\\u003c')));
     return;
   }
 
@@ -719,10 +775,12 @@ httpServer.on("upgrade", (req, socket, head) => {
     if (!validLiveTicket(url.searchParams.get("ticket") || "")) {
       socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n"); socket.destroy(); return;
     }
+    req.liveParallel = url.searchParams.get("parallel") === "1";
     liveWss.handleUpgrade(req, socket, head, ws => liveWss.emit("connection", ws, req));
     return;
   }
-  if (!["/browser","/desktop"].includes(url.pathname) || !BRIDGE_TOKEN || url.searchParams.get("token") !== BRIDGE_TOKEN) {
+
+  if (!["/browser","/desktop","/capture"].includes(url.pathname) || !BRIDGE_TOKEN || url.searchParams.get("token") !== BRIDGE_TOKEN) {
     socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
     socket.destroy();
     return;
@@ -730,13 +788,17 @@ httpServer.on("upgrade", (req, socket, head) => {
   wss.handleUpgrade(req, socket, head, ws => wss.emit("connection", ws, req));
 });
 
-liveWss.on("connection", socket => {
-  if(activeLiveViewer&&activeLiveViewer!==socket&&activeLiveViewer.readyState===WebSocket.OPEN)activeLiveViewer.close(4002,"Replaced by newer live viewer");
-  activeLiveViewer=socket;
+liveWss.on("connection", (socket, req) => {
+  // Close all previous viewers, including previews created by older releases.
+  for (const previous of liveWss.clients) if(previous!==socket&&previous.readyState===WebSocket.OPEN)previous.close(4002,"Replaced by newer live viewer");
+  const parallelPreview = req.liveParallel === true;
+  if(!parallelPreview&&activeLiveViewer&&activeLiveViewer!==socket&&activeLiveViewer.readyState===WebSocket.OPEN)activeLiveViewer.close(4002,"Replaced by newer live viewer");
+  if(!parallelPreview)activeLiveViewer=socket;
   let monitor = 0;
   let active = true;
   let pumping = false;
   let pushMode = false;
+  let source = "desktop";
   socket.liveMonitor = 0;
   socket.liveActive = true;
   const sendJson = value => { if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(value)); };
@@ -744,14 +806,17 @@ liveWss.on("connection", socket => {
     if (pumping) return;
     pumping = true;
     while (active && socket.readyState === WebSocket.OPEN) {
+      if(source!=="desktop") { await new Promise(resolve=>setTimeout(resolve,250)); continue; }
       const started = Date.now();
       const requestedScreen = monitor;
       try {
-        const shot = await getFastDesktopFrame(requestedScreen, 1024, 50, 12000);
+        const shot = await getFastDesktopFrame(requestedScreen, 1920, 85, 12000);
         const frame = shot.buffer;
         if (socket.readyState !== WebSocket.OPEN) break;
         sendJson({ type: "frame", screen: requestedScreen, at: Date.now(), bytes: frame.length, latencyMs: Date.now() - started, mimeType: shot.mimeType, width: shot.width, height: shot.height, fallback: !!shot.fallback });
         socket.send(frame, { binary: true });
+        const wait = Math.max(0, 1000 / 12 - (Date.now() - started));
+        if (wait) await new Promise(resolve => setTimeout(resolve, wait));
       } catch (error) {
         sendJson({ type: "error", message: error.message });
         await new Promise(resolve => setTimeout(resolve, 1000));
@@ -762,14 +827,40 @@ liveWss.on("connection", socket => {
   socket.on("message", raw => {
     try {
       const message = JSON.parse(raw.toString());
-      if (message.type === "select" && Number.isInteger(message.screen) && message.screen >= 0 && message.screen < 16) {
+      if(socket.readyState!==WebSocket.OPEN)return;
+      if (message.type === "select" && message.source === "browser") {
+        source="browser"; socket.liveSource="browser"; active=true; socket.liveActive=true; pushMode=false; livePushSubscribers.delete(socket);
+        void callDesktop("desktop_mouse_action",{kind:"live_stream_stop"},3000).catch(()=>{});
+        sendJson({type:"capture_state",...browserCaptureState});
+      } else if (message.type === "select" && Number.isInteger(message.screen) && message.screen >= 0 && message.screen < 16) {
+        source="desktop"; socket.liveSource="desktop";
         monitor = message.screen; socket.liveMonitor = monitor; active = true; socket.liveActive = true;
-        void callDesktop("desktop_mouse_action",{kind:"live_stream_start",screen:monitor,fps:60,width:640,quality:35,audio:true},5000).then(result=>{if(result?.started){pushMode=true;livePushSubscribers.add(socket);}else{pushMode=false;void pump();}}).catch(()=>{pushMode=false;void pump();});
-      } else if (message.type === "pause") { active = false; socket.liveActive = false; }
-      else if (message.type === "resume") { active = true; socket.liveActive = true; if(!pushMode)void pump(); }
+        if (message.mode !== "h264") {
+          pushMode=false;livePushSubscribers.delete(socket);
+          void callDesktop("desktop_mouse_action",{kind:"live_stream_stop"},3000).catch(()=>{}).finally(()=>void pump());
+          return;
+        }
+        pushMode=true;livePushSubscribers.add(socket);
+        void callDesktop("desktop_mouse_action",{kind:"live_stream_start",screen:monitor,fps:60,width:1280,quality:55,audio:true},5000).then(result=>{sendJson({type:"stream_state",...result});if(!result?.started){livePushSubscribers.delete(socket);pushMode=false;void pump();}}).catch(error=>{sendJson({type:"stream_state",started:false,videoError:error.message});livePushSubscribers.delete(socket);pushMode=false;void pump();});
+      } else if (message.type === "pause") {
+        active = false; socket.liveActive = false; pushMode = false; livePushSubscribers.delete(socket);
+        if(activeLiveViewer===socket&&!livePushSubscribers.size)void callDesktop("desktop_mouse_action",{kind:"live_stream_stop"},3000).catch(()=>{});
+      }
+      else if (message.type === "resume") {
+        active = true; socket.liveActive = true; pushMode = true; livePushSubscribers.add(socket);
+        void callDesktop("desktop_mouse_action",{kind:"live_stream_start",screen:monitor,fps:60,width:1280,quality:55,audio:true},5000).catch(error=>sendJson({type:"stream_state",started:false,videoError:error.message}));
+      }
     } catch {}
   });
-  socket.on("close", () => { active = false; livePushSubscribers.delete(socket); if(activeLiveViewer===socket)activeLiveViewer=null; if(!livePushSubscribers.size)void callDesktop("desktop_mouse_action",{kind:"live_stream_stop"},3000).catch(()=>{}); });
+  socket.on("close", () => {
+    active = false;
+    livePushSubscribers.delete(socket);
+    const wasActiveViewer = activeLiveViewer === socket;
+    if (wasActiveViewer) activeLiveViewer = null;
+    // A replaced/older viewer must never stop the encoder just started by the
+    // newest viewer. Only the currently active viewer owns the stop command.
+    if (wasActiveViewer && !livePushSubscribers.size) void callDesktop("desktop_mouse_action",{kind:"live_stream_stop"},3000).catch(()=>{});
+  });
   socket.on("error", () => { active = false; livePushSubscribers.delete(socket); });
   sendJson({ type: "ready" });
 });
@@ -777,6 +868,25 @@ liveWss.on("connection", socket => {
 wss.on("connection", (socket, req) => {
   const path = new URL(req.url || "/", "http://localhost").pathname;
   const isDesktop = path === "/desktop";
+  const isCapture = path === "/capture";
+  if(isCapture){
+    if(captureSocket&&captureSocket.readyState===WebSocket.OPEN)captureSocket.close(4003,"Replaced by newer capture connection");
+    captureSocket=socket; browserCaptureState={active:false,connected:true};
+    let pendingCaptureMeta=null;
+    socket.on("message",(raw,isBinary)=>{
+      if(isBinary){
+        if(!pendingCaptureMeta)return; const meta=pendingCaptureMeta;pendingCaptureMeta=null;const payload=Buffer.from(raw);
+        for(const viewer of liveWss.clients){if(viewer.readyState!==WebSocket.OPEN||!viewer.liveActive||viewer.liveSource!=="browser")continue;viewer.send(JSON.stringify({...meta,type:"webm",bytes:payload.length,latencyMs:Math.max(0,Date.now()-Number(meta.at||Date.now()))}));viewer.send(payload,{binary:true});}
+        return;
+      }
+      let msg;try{msg=JSON.parse(raw.toString());}catch{return;}
+      if(msg.type==="capture_chunk")pendingCaptureMeta=msg;
+      if(msg.type==="capture_state"){browserCaptureState={...msg,connected:true};for(const viewer of liveWss.clients)if(viewer.readyState===WebSocket.OPEN&&viewer.liveSource==="browser")viewer.send(JSON.stringify(browserCaptureState));}
+    });
+    socket.on("close",()=>{if(captureSocket===socket){captureSocket=null;browserCaptureState={active:false,connected:false};}});
+    socket.on("error",()=>socket.close());
+    return;
+  }
   if (isDesktop) {
     if (desktopSocket && desktopSocket.readyState === WebSocket.OPEN) desktopSocket.close(4001, "Replaced by newer desktop connection");
     desktopSocket = socket;
@@ -824,8 +934,8 @@ wss.on("connection", (socket, req) => {
 });
 
 httpServer.listen(PORT, "0.0.0.0", () => {
-  console.log(`Comet ChatGPT Bridge v0.7.22 listening on 0.0.0.0:${PORT}`);
-  console.log("MCP v2 handler ready at /mcp | WSS /browser + /desktop | health /health");
+  console.log(`Comet ChatGPT Bridge v0.7.31 listening on 0.0.0.0:${PORT}`);
+  console.log("MCP v2 handler ready at /mcp | WSS /browser + /desktop + /capture | health /health");
 });
 
 process.on("SIGTERM", async () => {
