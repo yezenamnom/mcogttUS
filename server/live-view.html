@@ -46,6 +46,7 @@
       let source = null;
       let timer = null;
       let stream = null;
+      let heartbeatTimer = null;
       let pendingFrameInfo = null;
       let pendingPacketInfo = null;
       let audioContext = null;
@@ -154,6 +155,7 @@
         return result?.structuredContent || result?.call_tool_result?.structuredContent || result?.mcp_tool_result?.structuredContent || result;
       }
       function configure(result) {
+        if (!active) return;
         result = unwrap(result);
         if (!result || typeof result.connected !== 'boolean') return;
         latest = result;
@@ -184,6 +186,7 @@
       }
       function schedule(delay) { clearTimeout(timer); if (active) timer = setTimeout(refreshConnection, delay); }
       function closeStream() {
+        clearInterval(heartbeatTimer); heartbeatTimer = null;
         if (stream) { stream.onclose = null; stream.close(); stream = null; }
       }
       function connectStream(url) {
@@ -191,7 +194,14 @@
         closeStream();
         stream = new WebSocket(url);
         stream.binaryType = 'arraybuffer';
-        stream.onopen = () => stream.send(JSON.stringify(source==='browser' ? { type:'select',source:'browser' } : { type: 'select', screen: Number(source), mode: 'jpeg' }));
+        stream.onopen = () => {
+          if (!active || document.hidden) { stopLeavingView(); return; }
+          stream.send(JSON.stringify(source==='browser' ? { type:'select',source:'browser' } : { type: 'select', screen: Number(source), mode: 'jpeg' }));
+          heartbeatTimer = setInterval(() => {
+            if (active && !document.hidden && stream?.readyState === WebSocket.OPEN)
+              stream.send(JSON.stringify({type:'heartbeat'}));
+          }, 5000);
+        };
         stream.onmessage = event => {
           if (typeof event.data === 'string') {
             try {
@@ -223,8 +233,9 @@
         };
         stream.onerror = () => { status.textContent = 'تعذر فتح قناة البث'; };
         stream.onclose = event => {
+          clearInterval(heartbeatTimer); heartbeatTimer = null;
           stream = null;
-          if(event.code===4002){active=false;clearTimeout(timer);screen.classList.remove('ready');status.textContent='انتقل البث إلى جلسة أحدث';message.textContent='تم إيقاف هذه الجلسة لتخفيف الضغط. آخر شات فتح العرض المباشر هو الجلسة النشطة.';return;}
+          if(event.code===4002 || event.code===4004){active=false;clearTimeout(timer);resetVideo();screen.classList.remove('ready');toggle.textContent='متابعة';status.textContent='البث متوقف';message.textContent=event.code===4002?'آخر طلب عرض شاشة هو الجلسة النشطة.':'توقف البث لانقطاع اتصال العرض. اضغط متابعة للاستئناف.';return;}
           if (active) { latest = null; schedule(1000); }
         };
       }
@@ -292,7 +303,15 @@
         video.muted=!audioEnabled; if(audioEnabled)video.play().catch(()=>{});
         nextAudioTime = 0; audioButton.textContent = audioEnabled ? 'كتم الصوت' : 'تشغيل الصوت';
       });
-      window.addEventListener('pagehide', () => { active = false; clearTimeout(timer); closeStream(); });
+      function stopLeavingView() {
+        active = false; clearTimeout(timer);
+        if (stream?.readyState === WebSocket.OPEN) stream.send(JSON.stringify({type:'pause'}));
+        closeStream(); resetVideo();
+        toggle.textContent='متابعة'; status.textContent='متوقف';
+        message.textContent='توقف إرسال الشاشة عند مغادرة العرض. اضغط متابعة للاستئناف.';
+      }
+      window.addEventListener('pagehide', stopLeavingView);
+      document.addEventListener('visibilitychange', () => { if (document.hidden) stopLeavingView(); });
       configure(window.openai?.toolOutput || window.openai?.toolResponseMetadata || embeddedState);
       // Use the fresh opening-tool state first. If a cached ticket is stale,
       // the WebSocket close handler requests replacement state automatically.
