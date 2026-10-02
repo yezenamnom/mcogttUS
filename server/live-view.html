@@ -191,7 +191,12 @@
       });
       window.addEventListener('openai:set_globals', event => configure(event.detail?.globals?.toolOutput));
       function unwrap(result) {
-        return result?.structuredContent || result?.call_tool_result?.structuredContent || result?.mcp_tool_result?.structuredContent || result;
+        result=result?.call_tool_result || result?.mcp_tool_result || result;
+        if(result?.structuredContent)return result.structuredContent;
+        for(const item of result?.content || [])if(item.type==='text'){
+          try{const value=JSON.parse(item.text);if(typeof value.connected==='boolean')return value;}catch{}
+        }
+        return result;
       }
       function configure(result) {
         if (!active) return;
@@ -221,6 +226,7 @@
         if (selectedMonitor?.width && selectedMonitor?.height) { screen.style.setProperty('--monitor-ratio', `${selectedMonitor.width} / ${selectedMonitor.height}`);screen.style.setProperty('--monitor-aspect', String(selectedMonitor.width/selectedMonitor.height)); }
         else { screen.style.setProperty('--monitor-ratio','16 / 9');screen.style.setProperty('--monitor-aspect','1.7778'); }
         status.textContent = 'جارٍ فتح البث المباشر…';
+        message.textContent = 'بانتظار أول إطار من البث…';
         connectStream(result.streamUrl);
       }
       function schedule(delay) { clearTimeout(timer); if (active) timer = setTimeout(refreshConnection, delay); }
@@ -234,7 +240,7 @@
         stream = new WebSocket(url);
         stream.binaryType = 'arraybuffer';
         stream.onopen = () => {
-          if (!active || document.hidden) { stopLeavingView(); return; }
+          if (!active || document.hidden) { if(active&&document.hidden)resumeAfterVisibility=true;stopLeavingView(); return; }
           stream.send(JSON.stringify(source==='browser' ? { type:'select',source:'browser' } : { type: 'select', screen: Number(source), mode: 'jpeg' }));
           let lastPlayback=video.currentTime; let stalledTicks=0;
           heartbeatTimer = setInterval(() => {
@@ -319,9 +325,11 @@
       });
       toggle.addEventListener('click', () => {
         active = !active; toggle.textContent = active ? 'إيقاف مؤقت' : 'متابعة';
+        resumeAfterVisibility=false;
         lastFrameAt = 0; measuredFps = 0;
         status.textContent = active ? 'جارٍ الاستئناف…' : 'متوقف مؤقتًا';
         if (active) {
+          message.textContent='جارٍ إعادة الاتصال بالبث…';
           resetVideo(); closeStream(); refreshConnection(); return;
         } else {
           clearTimeout(timer);
@@ -368,12 +376,14 @@
         toggle.textContent='متابعة'; status.textContent='متوقف';
         message.textContent='توقف إرسال الشاشة عند مغادرة العرض. اضغط متابعة للاستئناف.';
       }
-      window.addEventListener('pagehide', stopLeavingView);
+      window.addEventListener('pagehide', () => {resumeAfterVisibility=resumeAfterVisibility||active;stopLeavingView();});
+      function resumeVisibleView(){
+        if(!document.hidden&&resumeAfterVisibility){resumeAfterVisibility=false;active=true;toggle.textContent='إيقاف مؤقت';message.textContent='جارٍ إعادة الاتصال بالبث…';refreshConnection();}
+      }
+      window.addEventListener('pageshow',resumeVisibleView);
       document.addEventListener('visibilitychange', () => {
         if(document.hidden){resumeAfterVisibility=active;stopLeavingView();}
-        else if(resumeAfterVisibility){
-          resumeAfterVisibility=false;active=true;toggle.textContent='إيقاف مؤقت';refreshConnection();
-        }
+        else resumeVisibleView();
       });
       configure(window.openai?.toolOutput || window.openai?.toolResponseMetadata || embeddedState);
       // Use the fresh opening-tool state first. If a cached ticket is stale,

@@ -94,3 +94,27 @@ test('browser video stays in waiting state until a decoded frame exists',()=>{
  h.elements.video.listeners.loadeddata();
  assert.equal(h.elements.screen.classList.ready,true);
 });
+test('socket opening while mobile is hidden resumes on visibility restoration',async()=>{
+ const state={connected:true,streamUrl:'wss://bridge/live?ticket=secret',monitors:[{index:0,primary:true}]};
+ const h=harness(state,state);h.document.hidden=true;h.sockets[0].onopen();
+ h.document.hidden=false;h.documentEvents.visibilitychange();
+ for(let i=0;i<8;i++)await Promise.resolve();
+ assert.equal(h.sockets.length,2);
+ assert.equal(h.elements.toggle.textContent,'إيقاف مؤقت');
+ assert.doesNotMatch(h.elements.message.textContent,/متوقف/);
+});
+test('mobile pageshow restores a suspended view but not a manual pause',async()=>{
+ const state={connected:true,streamUrl:'wss://bridge/live?ticket=secret',monitors:[{index:0,primary:true}]};
+ const h=harness(state,state);h.windowEvents.pagehide();h.windowEvents.pageshow();
+ for(let i=0;i<8;i++)await Promise.resolve();
+ assert.equal(h.sockets.length,2);
+ h.elements.toggle.listeners.click();h.windowEvents.pagehide();h.windowEvents.pageshow();
+ for(let i=0;i<8;i++)await Promise.resolve();
+ assert.equal(h.sockets.length,2);
+});
+test('viewer accepts text JSON tool responses when structuredContent is omitted',async()=>{
+ const state={connected:true,streamUrl:'wss://bridge/live?ticket=secret',monitors:[{index:0,primary:true}]};
+ const h=harness({content:[{type:'text',text:JSON.stringify(state)}]},state);
+ assert.equal(h.sockets.length,1);
+ assert.match(h.elements.message.textContent,/أول إطار/);
+});
