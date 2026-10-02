@@ -29,6 +29,8 @@ const LIVE_VIEW_HTML = readFileSync(new URL("./live-view.html", import.meta.url)
 const OPERATING_RULES = readFileSync(new URL("./OPERATING_RULES_AR.md", import.meta.url), "utf8");
 const SMART_URI = "ui://gpt-us/smart-actions.html";
 const SMART_HTML = readFileSync(new URL("./smart-actions.html", import.meta.url), "utf8");
+const VISION_URI = "ui://gpt-us/desktop-vision-v1.html";
+const VISION_HTML = readFileSync(new URL("./desktop-vision.html", import.meta.url), "utf8");
 let smartState = { revision: 0, phase: "idle", options: [], title: "الكمبيوتر" };
 let smartTask = "";
 function smartUpdate(patch) { smartState = { ...smartState, ...patch, revision: smartState.revision + 1 }; }
@@ -233,6 +235,12 @@ function makeMcpServer() {
     mimeType: "text/html;profile=mcp-app"
   }, async () => ({ contents: [{ uri: SMART_URI, mimeType: "text/html;profile=mcp-app", text: SMART_HTML,
     _meta: { "openai/ui": { availableDisplayModes: ["inline", "fullscreen"], preferredDisplayMode: "inline" } } }] }));
+
+  server.registerResource("gpt-us-desktop-vision", VISION_URI, {
+    description: "Privately attach the requested desktop frame to the ChatGPT conversation",
+    mimeType: "text/html;profile=mcp-app"
+  }, async () => ({ contents: [{ uri: VISION_URI, mimeType: "text/html;profile=mcp-app", text: VISION_HTML,
+    _meta: { "openai/ui": { availableDisplayModes: ["inline"], preferredDisplayMode: "inline" } } }] }));
 
   server.registerTool("open_smart_panel", {
     description: "Open the live numbered-choice panel in ChatGPT. Open early in a multi-step browser or desktop task. The panel updates as tools run; selecting a number asks ChatGPT to perform that next step.",
@@ -640,9 +648,10 @@ function makeMcpServer() {
     return {content:[{type:"image",data:shot.data,mimeType:shot.mimeType||"image/png"},{type:"text",text:JSON.stringify({x:shot.x,y:shot.y,width:shot.width,height:shot.height})}]};
   });
   server.registerTool("desktop_observe",{
-    description:"Observe one Windows monitor with a fresh JPEG image. Monitor 1 is screen 0; monitor 2 is screen 1. For a user asking what is visible, always set onlyIfChanged=false so an image is delivered even if another chat observed the same screen. REQUIRED after visible actions before claiming completion; inspect the image and never guess.",
+    description:"Observe one Windows monitor with a fresh JPEG image. Monitor 1 is screen 0; monitor 2 is screen 1. For a user asking what is visible, set onlyIfChanged=false. In ChatGPT this also attaches the image to a follow-up message so its vision model can inspect it. Wait for that image-based follow-up before describing the screen. REQUIRED after visible actions before claiming completion; never guess.",
     inputSchema:z.object({screen:z.number().int().min(0).max(15).default(0),onlyIfChanged:z.boolean().default(false),threshold:z.number().min(0).max(1).default(0.015),width:z.number().int().min(640).max(1920).default(1440),quality:z.number().int().min(25).max(85).default(72)}),
-    annotations:{readOnlyHint:true,destructiveHint:false,idempotentHint:true,openWorldHint:false}
+    annotations:{readOnlyHint:true,destructiveHint:false,idempotentHint:true,openWorldHint:false},
+    _meta:{ui:{resourceUri:VISION_URI},"openai/outputTemplate":VISION_URI}
   },async ({screen,onlyIfChanged,threshold,width,quality})=>{
     const shot=await getFastDesktopFrame(screen,width,quality,20000);
     const fingerprint=await sharp(shot.buffer).resize(32,18,{fit:"fill"}).greyscale().raw().toBuffer();
@@ -656,7 +665,8 @@ function makeMcpServer() {
     if(changed||!onlyIfChanged)content.unshift({type:"image",data:shot.buffer.toString("base64"),mimeType:shot.mimeType});
     // Keep vision observations in MCP content, not a competing JSON-only
     // structured result. Metadata remains available as the text content block.
-    return {content};
+    const hasImage=changed||!onlyIfChanged;
+    return {content,_meta:hasImage?{snapshot:{screen,mimeType:shot.mimeType,data:shot.buffer.toString("base64")}}:{}};
   });
   server.registerTool("desktop_mouse_action",{
     description:"One real Windows mouse operation. Coordinates are physical screen pixels including negative monitor origins. For a final click set screenshotAfter=true, inspect that returned image, and only then claim success. Never infer success merely because the click was sent. After verified success answer only 'تم' unless the user requested explanation or a report.",
