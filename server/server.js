@@ -53,6 +53,7 @@ let browserConnectedAt = null;
 let captureSocket = null;
 let browserCaptureState = { active: false };
 let desktopSocket = null;
+let desktopActivityEffectsEnabled = null;
 let desktopConnectedAt = null;
 const pending = new Map();
 const desktopPending = new Map();
@@ -204,7 +205,7 @@ function callDesktop(command, args = {}, timeoutMs = 30000) {
 }
 
 function makeMcpServer() {
-  const server = new McpServer({ name: "gpt-us-browser-desktop", version: "0.8.3" }, { instructions: instructionStore.get().text });
+  const server = new McpServer({ name: "gpt-us-browser-desktop", version: "0.8.4" }, { instructions: instructionStore.get().text });
 
   // Some ChatGPT connector hosts forward the app-qualified tool name back to
   // the MCP server (for example `gpt_us.bridge_info`) instead of stripping the
@@ -883,7 +884,7 @@ const httpServer = http.createServer(async (req, res) => {
     res.end(JSON.stringify({
       ok: true,
       service: "comet-chatgpt-bridge",
-      version: "0.8.3",
+      version: "0.8.4",
       mcp: "ready",
       browserConnected: !!browserSocket && browserSocket.readyState === WebSocket.OPEN,
       browserConnectedAt,
@@ -896,7 +897,7 @@ const httpServer = http.createServer(async (req, res) => {
 
   if (url.pathname === "/" && req.method === "GET") {
     res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({ service: "comet-chatgpt-bridge", version: "0.8.3", status: "ok", mcp: "/mcp" }));
+    res.end(JSON.stringify({ service: "comet-chatgpt-bridge", version: "0.8.4", status: "ok", mcp: "/mcp" }));
     return;
   }
 
@@ -1125,6 +1126,7 @@ wss.on("connection", (socket, req) => {
     if (browserSocket && browserSocket.readyState === WebSocket.OPEN) browserSocket.close(4000, "Replaced by newer Comet connection");
     browserSocket = socket;
     browserConnectedAt = new Date().toISOString();
+    if(desktopActivityEffectsEnabled!==null)socket.send(JSON.stringify({type:'activity_effects',enabled:desktopActivityEffectsEnabled}));
   }
 
   socket.on("message", (raw,isBinary) => {
@@ -1136,6 +1138,11 @@ wss.on("connection", (socket, req) => {
     }
     let msg;
     try { msg = JSON.parse(raw.toString()); } catch { return; }
+    if(isDesktop&&desktopSocket===socket&&msg.type==='activity_effects'&&typeof msg.enabled==='boolean'){
+      desktopActivityEffectsEnabled=msg.enabled;
+      if(browserSocket?.readyState===WebSocket.OPEN)browserSocket.send(JSON.stringify({type:'activity_effects',enabled:msg.enabled}));
+      return;
+    }
     if (msg.type === "ping") {
       socket.send(JSON.stringify({ type: "pong", at: Date.now() }));
       return;
@@ -1164,7 +1171,7 @@ wss.on("connection", (socket, req) => {
 });
 
 httpServer.listen(PORT, "0.0.0.0", () => {
-  console.log(`Comet ChatGPT Bridge v0.8.3 listening on 0.0.0.0:${PORT}`);
+  console.log(`Comet ChatGPT Bridge v0.8.4 listening on 0.0.0.0:${PORT}`);
   console.log("MCP v2 handler ready at /mcp | WSS /browser + /desktop + /capture | health /health");
 });
 

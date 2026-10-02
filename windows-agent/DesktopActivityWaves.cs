@@ -11,7 +11,7 @@ internal sealed class DesktopActivityWaves : IDisposable
  public DesktopActivityWaves()
  {
   foreach(var screen in Screen.AllScreens){
-   var window=new WaveWindow { Bounds=screen.Bounds };
+   var window=new WaveWindow { Bounds=new Rectangle(screen.Bounds.Left,screen.Bounds.Bottom-70,screen.Bounds.Width,70) };
    windows.Add(window);
   }
   timer.Tick+=(_,_)=>{

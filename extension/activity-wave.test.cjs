@@ -2,6 +2,16 @@ const {test}=require('node:test');
 const assert=require('node:assert/strict');
 const vm=require('node:vm');
 const fs=require('node:fs');
+test('Windows master switch hides existing browser effect immediately and survives pulses',async()=>{
+ let host,changed,read,cleared=0;
+ const context={document:{getElementById:()=>host,createElement:()=>({style:{setProperty(name,value){this[name]=value}},setAttribute(){},attachShadow(){return this}}),documentElement:{append:e=>host=e}},chrome:{storage:{local:{get:()=>new Promise(resolve=>read=resolve)},onChanged:{addListener:fn=>changed=fn}}},clearTimeout(){cleared++},setTimeout(){return 1}};
+ vm.createContext(context);const source=fs.readFileSync(__dirname+'/activity-wave.js','utf8');vm.runInContext(source,context);
+ context.__gptusShowWave();assert.equal(host.hidden,true,'no flash before settings load');
+ read({activityEffectsEnabled:true,desktopActivityEffectsEnabled:true});await Promise.resolve();context.__gptusShowWave();assert.equal(host.style.display,'block');
+ changed({desktopActivityEffectsEnabled:{newValue:false}},'local');assert.equal(host.hidden,true);assert.equal(host.style.display,'none');context.__gptusShowWave();assert.equal(host.hidden,true);
+ changed({activityEffectsEnabled:{newValue:true}},'local');context.__gptusShowWave();assert.equal(host.hidden,true,'local switch cannot override Windows off');
+ const first=changed;vm.runInContext(source,context);assert.equal(changed,first,'no duplicate storage listener');assert.ok(cleared>0);
+});
 test('page helpers are reused inside one document',()=>{
  const source=fs.readFileSync(__dirname+'/background.js','utf8');
  const context={};vm.createContext(context);
@@ -13,7 +23,7 @@ test('page helpers are reused inside one document',()=>{
 });
 test('wave is click-through, idle-hidden, reused and times out',()=>{
  let host,timer,created=0;
- const context={document:{getElementById:()=>host,createElement:()=>{created++;return {style:{},setAttribute(){},attachShadow(){return this;}};},documentElement:{append:e=>{host=e;}}},clearTimeout(){},setTimeout:fn=>{timer=fn;return 1;}};
+ const context={document:{getElementById:()=>host,createElement:()=>{created++;return {style:{setProperty(name,value){this[name]=value}},setAttribute(){},attachShadow(){return this;}};},documentElement:{append:e=>{host=e;}}},clearTimeout(){},setTimeout:fn=>{timer=fn;return 1;}};
  vm.createContext(context);
  const source=fs.readFileSync(__dirname+'/activity-wave.js','utf8');
  vm.runInContext(source,context);

@@ -1,4 +1,4 @@
-const SOURCE_BUILD="0.12.3";
+const SOURCE_BUILD="0.12.4";
 if(localStorage.getItem("gptUsSourceBuild")!==SOURCE_BUILD){
  localStorage.setItem("gptUsSourceBuild",SOURCE_BUILD);
  setTimeout(()=>chrome.runtime.reload(),150);

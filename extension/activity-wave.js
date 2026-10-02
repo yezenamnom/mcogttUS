@@ -19,16 +19,20 @@
     </style><div class="field"></div><div class="rim"></div><svg class="edge top" viewBox="0 0 1200 58" preserveAspectRatio="none"><defs><linearGradient id="siri"><stop stop-color="#aa5fe9"/><stop offset=".24" stop-color="#737bfb"/><stop offset=".5" stop-color="#4ed9ea"/><stop offset=".76" stop-color="#e48abe"/><stop offset="1" stop-color="#aa5fe9"/></linearGradient></defs><path stroke="url(#siri)" d="M0 20 Q150 2 300 20 T600 20 T900 20 T1200 20"/><path stroke="#67bff0" d="M0 27 Q150 46 300 27 T600 27 T900 27 T1200 27"/><path stroke="#e8a6d9" d="M0 33 Q150 14 300 33 T600 33 T900 33 T1200 33"/></svg><svg class="edge bottom" viewBox="0 0 1200 58" preserveAspectRatio="none"><path stroke="#a872ea" d="M0 20 Q150 2 300 20 T600 20 T900 20 T1200 20"/><path stroke="#60d9e9" d="M0 29 Q150 46 300 29 T600 29 T900 29 T1200 29"/></svg><svg class="side left" viewBox="0 0 58 1200" preserveAspectRatio="none"><path stroke="#ae6bee" d="M20 0 Q2 150 20 300 T20 600 T20 900 T20 1200"/><path stroke="#6cbdff" d="M29 0 Q47 150 29 300 T29 600 T29 900 T29 1200"/></svg><svg class="side right" viewBox="0 0 58 1200" preserveAspectRatio="none"><path stroke="#60d9e9" d="M20 0 Q2 150 20 300 T20 600 T20 900 T20 1200"/><path stroke="#ec92c7" d="M29 0 Q47 150 29 300 T29 600 T29 900 T29 1200"/></svg><div class="mark"><span>⌄⌄</span></div>`;
     document.documentElement.append(host);
   }
-  host.hidden=true;
-  let effectsEnabled=true;
+  if(globalThis.__gptusWaveInitialized)return;
+  globalThis.__gptusWaveInitialized=true;
+  let effectsEnabled=false,localEnabled=true,desktopEnabled=true;
+  function hide(){host.hidden=true;host.style.setProperty('display','none','important');clearTimeout(globalThis.__gptusWaveTimeout);}
+  function update(){effectsEnabled=localEnabled&&desktopEnabled;if(!effectsEnabled)hide();}
+  hide();
   if(typeof chrome!=='undefined'&&chrome.storage){
-    chrome.storage.local.get(['activityEffectsEnabled']).then(value=>{effectsEnabled=value.activityEffectsEnabled!==false;if(!effectsEnabled)host.hidden=true;});
-    chrome.storage.onChanged?.addListener((changes,area)=>{if(area==='local'&&changes.activityEffectsEnabled){effectsEnabled=changes.activityEffectsEnabled.newValue!==false;if(!effectsEnabled)host.hidden=true;}});
-  }
+    chrome.storage.local.get(['activityEffectsEnabled','desktopActivityEffectsEnabled']).then(value=>{localEnabled=value.activityEffectsEnabled!==false;desktopEnabled=value.desktopActivityEffectsEnabled!==false;update();});
+    chrome.storage.onChanged?.addListener((changes,area)=>{if(area!=='local')return;if(changes.activityEffectsEnabled)localEnabled=changes.activityEffectsEnabled.newValue!==false;if(changes.desktopActivityEffectsEnabled)desktopEnabled=changes.desktopActivityEffectsEnabled.newValue!==false;update();});
+  }else effectsEnabled=true;
   globalThis.__gptusShowWave=()=>{
     if(!effectsEnabled)return;
-    host.hidden=false;
+    host.hidden=false;host.style.setProperty('display','block','important');
     clearTimeout(globalThis.__gptusWaveTimeout);
-    globalThis.__gptusWaveTimeout=setTimeout(()=>{host.hidden=true;},1800);
+    globalThis.__gptusWaveTimeout=setTimeout(hide,1800);
   };
 })();

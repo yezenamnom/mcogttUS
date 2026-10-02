@@ -39,6 +39,12 @@ test("private live-view resource, auth, monitor selection and frame delivery", a
           : { mimeType: "image/png", data: png.toString("base64"), screen: command.args.screen };
       socket.send(JSON.stringify({ type: "result", id: command.id, ok: true, result }));
     });
+    socket.send(JSON.stringify({type:'activity_effects',enabled:false}));await new Promise(r=>setTimeout(r,30));
+    const browser=new WebSocket(`ws://127.0.0.1:${port}/browser?token=${token}`);
+    const cachedEffects=await new Promise((resolve,reject)=>{browser.once('error',reject);browser.once('message',raw=>resolve(JSON.parse(raw.toString())));});
+    assert.deepEqual(cachedEffects,{type:'activity_effects',enabled:false});
+    const effectsChange=new Promise(resolve=>browser.once('message',raw=>resolve(JSON.parse(raw.toString()))));
+    socket.send(JSON.stringify({type:'activity_effects',enabled:true}));assert.equal((await effectsChange).enabled,true);browser.close();
     const unauthorized = await fetch(`${base}/mcp`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
     assert.equal(unauthorized.status, 401);
     let session;

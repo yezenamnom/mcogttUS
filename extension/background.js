@@ -1,7 +1,7 @@
 let ws = null;
 let reconnectTimer = null;
 let pingTimer = null;
-const EXT_VERSION = "0.12.3";
+const EXT_VERSION = "0.12.4";
 const domState = new Map();
 const cdpAttached = new Set();
 const networkState = new Map();
@@ -91,6 +91,12 @@ async function connect() {
   ws.onmessage = event => {
     let msg;
     try { msg = JSON.parse(event.data); } catch { return; }
+    if(msg.type==='activity_effects'&&typeof msg.enabled==='boolean'){
+      void chrome.storage.local.set({desktopActivityEffectsEnabled:msg.enabled}).then(async()=>{
+        const tabs=await chrome.tabs.query({});
+        await Promise.allSettled(tabs.filter(tab=>tab.id&&/^https?:/.test(tab.url||'')).map(tab=>chrome.scripting.executeScript({target:{tabId:tab.id},files:['activity-wave.js']})));
+      });return;
+    }
     if (msg.type !== "command" || !msg.id) return;
     commandQueue = commandQueue.catch(()=>{}).then(async()=>{
       if(connection.readyState!==WebSocket.OPEN)return;
