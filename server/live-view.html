@@ -269,10 +269,15 @@
       // Ask the host to keep the ongoing live session visible above the chat.
       let pinRequested = false;
       const pinLiveView = async () => {
-        if (pinRequested || !window.openai?.requestDisplayMode) return;
+        if (pinRequested) return;
         pinRequested = true;
-        try { await window.openai.requestDisplayMode({ mode: 'pip' }); }
-        catch { pinRequested = false; }
+        try {
+          if (window.openai?.requestDisplayMode) {
+            await window.openai.requestDisplayMode({ mode: 'pip' });
+          } else {
+            await rpc('ui/request-display-mode', { mode: 'pip' });
+          }
+        } catch { pinRequested = false; }
       };
       window.addEventListener('openai:set_globals', pinLiveView);
       pinLiveView();
