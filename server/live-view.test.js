@@ -62,8 +62,9 @@ test("private live-view resource, auth, monitor selection and frame delivery", a
     assert.deepEqual(tools.find(t => t.name === "live_view_state")._meta.ui.visibility, ["app"]);
     assert.equal(tools.find(t => t.name === "open_smart_panel")._meta.ui.resourceUri, "ui://gpt-us/smart-actions.html");
     assert.deepEqual(tools.find(t => t.name === "smart_action_state")._meta.ui.visibility, ["app"]);
-    assert.equal(tools.find(t => t.name === "desktop_observe")._meta.ui.resourceUri, "ui://gpt-us/desktop-vision-v2.html");
-    const visionResource = await rpc(32, "resources/read", { uri: "ui://gpt-us/desktop-vision-v2.html" });
+    assert.equal(tools.find(t => t.name === "desktop_observe")._meta.ui.resourceUri, "ui://gpt-us/desktop-vision-v3.html");
+    assert.equal(tools.find(t => t.name === "screenshot")._meta.ui.resourceUri, "ui://gpt-us/desktop-vision-v3.html");
+    const visionResource = await rpc(32, "resources/read", { uri: "ui://gpt-us/desktop-vision-v3.html" });
     assert.match(visionResource.result.contents[0].text, /setWidgetState/);
     assert.match(visionResource.result.contents[0].text, /imageIds/);
     const smartResource = await rpc(30, "resources/read", { uri: "ui://gpt-us/smart-actions.html" });
@@ -125,6 +126,11 @@ test("private live-view resource, auth, monitor selection and frame delivery", a
       assert.equal(observed.result._meta.snapshot.mimeType, "image/jpeg");
       assert.equal(observed.result._meta.snapshot.screen, 1);
       assert.ok(Buffer.from(observed.result._meta.snapshot.data, "base64").equals(jpeg));
+      const singleCapture = await rpc(53, "tools/call", { name: "screenshot", arguments: { screen: 0 } });
+      assert.equal(singleCapture.result._meta.snapshots.length, 1);
+      assert.equal(singleCapture.result._meta.snapshots[0].screen, 0);
+      const bothCaptures = await rpc(54, "tools/call", { name: "screenshot", arguments: { allScreens: true } });
+      assert.deepEqual(bothCaptures.result._meta.snapshots.map(item => item.screen), [0, 1]);
     assert.equal(JSON.parse(observed.result.content.find(item => item.type === "text").text).changed, true);
     assert.equal(observed.result.structuredContent, undefined, "Vision results must not be replaced by JSON-only structured content");
     const unchanged = await rpc(51, "tools/call", { name: "desktop_observe", arguments: { screen: 1 } });
