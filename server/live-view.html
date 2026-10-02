@@ -266,6 +266,16 @@
         window.openai?.notifyIntrinsicHeight?.(document.documentElement.scrollHeight);
       };
       paintExpandedMode();
+      // Ask the host to keep the ongoing live session visible above the chat.
+      let pinRequested = false;
+      const pinLiveView = async () => {
+        if (pinRequested || !window.openai?.requestDisplayMode) return;
+        pinRequested = true;
+        try { await window.openai.requestDisplayMode({ mode: 'pip' }); }
+        catch { pinRequested = false; }
+      };
+      window.addEventListener('openai:set_globals', pinLiveView);
+      pinLiveView();
       expandButton.addEventListener('click', () => {
         expandedMode = !expandedMode;
         paintExpandedMode();
