@@ -22,7 +22,7 @@ const HOSTINGER_SFTP_DIR = process.env.HOSTINGER_SFTP_DIR || "";
 const HOSTINGER_SCREENSHOT_BASE_URL = (process.env.HOSTINGER_SCREENSHOT_BASE_URL || "").replace(/\/$/, "");
 // ChatGPT treats the resource URI as the component cache key. Keep each
 // published component immutable and bump the URI whenever its HTML changes.
-const LIVE_VIEW_URI = "ui://gpt-us/live-view-v26.html";
+const LIVE_VIEW_URI = "ui://gpt-us/live-view-v27.html";
 const PUBLIC_ORIGIN = (process.env.OAUTH_ISSUER || "https://mcogttus-production.up.railway.app").replace(/\/$/, "");
 const LIVE_WS_ORIGIN = PUBLIC_ORIGIN.replace(/^https:/, "wss:").replace(/^http:/, "ws:");
 const LIVE_VIEW_HTML = readFileSync(new URL("./live-view.html", import.meta.url), "utf8");
@@ -308,7 +308,7 @@ function makeMcpServer() {
     text: LIVE_VIEW_HTML.replace('__GPT_US_BOOTSTRAP_STATE__', 'null'),
     _meta: {
       ui: { csp: { connectDomains: [PUBLIC_ORIGIN, LIVE_WS_ORIGIN], resourceDomains: [] } },
-      "openai/ui": { availableDisplayModes: ["inline", "fullscreen"], preferredDisplayMode: "fullscreen" },
+      "openai/ui": { availableDisplayModes: ["fullscreen"], preferredDisplayMode: "fullscreen" },
       "openai/widgetCSP": { connect_domains: [PUBLIC_ORIGIN, LIVE_WS_ORIGIN], resource_domains: [] }
     }
   }] });
