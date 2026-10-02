@@ -22,7 +22,7 @@ const HOSTINGER_SFTP_DIR = process.env.HOSTINGER_SFTP_DIR || "";
 const HOSTINGER_SCREENSHOT_BASE_URL = (process.env.HOSTINGER_SCREENSHOT_BASE_URL || "").replace(/\/$/, "");
 // ChatGPT treats the resource URI as the component cache key. Keep each
 // published component immutable and bump the URI whenever its HTML changes.
-const LIVE_VIEW_URI = "ui://gpt-us/live-view-v22.html";
+const LIVE_VIEW_URI = "ui://gpt-us/live-view-v23.html";
 const PUBLIC_ORIGIN = (process.env.OAUTH_ISSUER || "https://mcogttus-production.up.railway.app").replace(/\/$/, "");
 const LIVE_WS_ORIGIN = PUBLIC_ORIGIN.replace(/^https:/, "wss:").replace(/^http:/, "ws:");
 const LIVE_VIEW_HTML = readFileSync(new URL("./live-view.html", import.meta.url), "utf8");
@@ -194,7 +194,7 @@ function callDesktop(command, args = {}, timeoutMs = 30000) {
 }
 
 function makeMcpServer() {
-  const server = new McpServer({ name: "gpt-us-browser-desktop", version: "0.7.36" }, { instructions: OPERATING_RULES });
+  const server = new McpServer({ name: "gpt-us-browser-desktop", version: "0.7.37" }, { instructions: OPERATING_RULES });
 
   // Some ChatGPT connector hosts forward the app-qualified tool name back to
   // the MCP server (for example `gpt_us.bridge_info`) instead of stripping the
@@ -308,7 +308,9 @@ function makeMcpServer() {
     text: LIVE_VIEW_HTML.replace('__GPT_US_BOOTSTRAP_STATE__', 'null'),
     _meta: {
       ui: { csp: { connectDomains: [PUBLIC_ORIGIN, LIVE_WS_ORIGIN], resourceDomains: [] } },
-      "openai/ui": { availableDisplayModes: ["inline", "fullscreen"], preferredDisplayMode: "inline" },
+      // Keep the live viewer as part of the chat message. Advertising
+      // fullscreen lets ChatGPT move it into the separate side-panel shell.
+      "openai/ui": { availableDisplayModes: ["inline"], preferredDisplayMode: "inline" },
       "openai/widgetCSP": { connect_domains: [PUBLIC_ORIGIN, LIVE_WS_ORIGIN], resource_domains: [] }
     }
   }] });
@@ -319,6 +321,7 @@ function makeMcpServer() {
   server.registerResource("gpt-us-live-view-v19-compat", "ui://gpt-us/live-view-v19.html", liveResourceConfig, liveResource("ui://gpt-us/live-view-v19.html"));
   server.registerResource("gpt-us-live-view-v20-compat", "ui://gpt-us/live-view-v20.html", liveResourceConfig, liveResource("ui://gpt-us/live-view-v20.html"));
   server.registerResource("gpt-us-live-view-v21-compat", "ui://gpt-us/live-view-v21.html", liveResourceConfig, liveResource("ui://gpt-us/live-view-v21.html"));
+  server.registerResource("gpt-us-live-view-v22-compat", "ui://gpt-us/live-view-v22.html", liveResourceConfig, liveResource("ui://gpt-us/live-view-v22.html"));
   server.registerResource("gpt-us-live-view-v17-compat", "ui://gpt-us/live-view-v17.html", liveResourceConfig, liveResource("ui://gpt-us/live-view-v17.html"));
   server.registerResource("gpt-us-live-view-v16-compat", "ui://gpt-us/live-view-v16.html", liveResourceConfig, liveResource("ui://gpt-us/live-view-v16.html"));
   server.registerResource("gpt-us-live-view-v15-compat", "ui://gpt-us/live-view-v15.html", liveResourceConfig, liveResource("ui://gpt-us/live-view-v15.html"));
@@ -343,7 +346,7 @@ function makeMcpServer() {
   }
 
   server.registerTool("open_live_view", {
-    description: "Open a private live viewer for the connected Windows computer inside ChatGPT. Always include the returned HTTPS viewerUrl as a clickable fallback link in your reply. Never replace it with a chatgpt.com/plugins URL.",
+    description: "Open the private live Windows viewer inline as part of the current ChatGPT message, with the conversation remaining directly below it. Always include the returned HTTPS viewerUrl as a clickable fallback link in your reply. Never replace it with a chatgpt.com/plugins URL.",
     inputSchema: z.object({}),
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     _meta: {
@@ -717,7 +720,7 @@ const httpServer = http.createServer(async (req, res) => {
     res.end(JSON.stringify({
       ok: true,
       service: "comet-chatgpt-bridge",
-      version: "0.7.36",
+      version: "0.7.37",
       mcp: "ready",
       browserConnected: !!browserSocket && browserSocket.readyState === WebSocket.OPEN,
       browserConnectedAt,
@@ -730,7 +733,7 @@ const httpServer = http.createServer(async (req, res) => {
 
   if (url.pathname === "/" && req.method === "GET") {
     res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({ service: "comet-chatgpt-bridge", version: "0.7.36", status: "ok", mcp: "/mcp" }));
+    res.end(JSON.stringify({ service: "comet-chatgpt-bridge", version: "0.7.37", status: "ok", mcp: "/mcp" }));
     return;
   }
 
@@ -939,7 +942,7 @@ wss.on("connection", (socket, req) => {
 });
 
 httpServer.listen(PORT, "0.0.0.0", () => {
-  console.log(`Comet ChatGPT Bridge v0.7.36 listening on 0.0.0.0:${PORT}`);
+  console.log(`Comet ChatGPT Bridge v0.7.37 listening on 0.0.0.0:${PORT}`);
   console.log("MCP v2 handler ready at /mcp | WSS /browser + /desktop + /capture | health /health");
 });
 
