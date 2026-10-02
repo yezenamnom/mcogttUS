@@ -22,7 +22,7 @@ const HOSTINGER_SFTP_DIR = process.env.HOSTINGER_SFTP_DIR || "";
 const HOSTINGER_SCREENSHOT_BASE_URL = (process.env.HOSTINGER_SCREENSHOT_BASE_URL || "").replace(/\/$/, "");
 // ChatGPT treats the resource URI as the component cache key. Keep each
 // published component immutable and bump the URI whenever its HTML changes.
-const LIVE_VIEW_URI = "ui://gpt-us/live-view-v25.html";
+const LIVE_VIEW_URI = "ui://gpt-us/live-view-v26.html";
 const PUBLIC_ORIGIN = (process.env.OAUTH_ISSUER || "https://mcogttus-production.up.railway.app").replace(/\/$/, "");
 const LIVE_WS_ORIGIN = PUBLIC_ORIGIN.replace(/^https:/, "wss:").replace(/^http:/, "ws:");
 const LIVE_VIEW_HTML = readFileSync(new URL("./live-view.html", import.meta.url), "utf8");
@@ -308,9 +308,7 @@ function makeMcpServer() {
     text: LIVE_VIEW_HTML.replace('__GPT_US_BOOTSTRAP_STATE__', 'null'),
     _meta: {
       ui: { csp: { connectDomains: [PUBLIC_ORIGIN, LIVE_WS_ORIGIN], resourceDomains: [] } },
-      // Keep the live viewer as part of the chat message. Advertising
-      // fullscreen lets ChatGPT move it into the separate side-panel shell.
-      "openai/ui": { availableDisplayModes: ["inline", "pip"], preferredDisplayMode: "pip" },
+      "openai/ui": { availableDisplayModes: ["inline", "fullscreen"], preferredDisplayMode: "fullscreen" },
       "openai/widgetCSP": { connect_domains: [PUBLIC_ORIGIN, LIVE_WS_ORIGIN], resource_domains: [] }
     }
   }] });
@@ -642,8 +640,8 @@ function makeMcpServer() {
     return {content:[{type:"image",data:shot.data,mimeType:shot.mimeType||"image/png"},{type:"text",text:JSON.stringify({x:shot.x,y:shot.y,width:shot.width,height:shot.height})}]};
   });
   server.registerTool("desktop_observe",{
-    description:"Smartly observe one Windows monitor using a fast compressed frame. REQUIRED after a user-requested visible action before claiming completion. If the expected app or state is not visible, retry or report failure; never guess. After verified success answer only 'تم' unless the user asked a question or requested a report.",
-    inputSchema:z.object({screen:z.number().int().min(0).max(15).default(0),onlyIfChanged:z.boolean().default(true),threshold:z.number().min(0).max(1).default(0.015),width:z.number().int().min(640).max(1920).default(1280),quality:z.number().int().min(25).max(85).default(58)}),
+    description:"Observe one Windows monitor with a fresh JPEG image. Monitor 1 is screen 0; monitor 2 is screen 1. For a user asking what is visible, always set onlyIfChanged=false so an image is delivered even if another chat observed the same screen. REQUIRED after visible actions before claiming completion; inspect the image and never guess.",
+    inputSchema:z.object({screen:z.number().int().min(0).max(15).default(0),onlyIfChanged:z.boolean().default(false),threshold:z.number().min(0).max(1).default(0.015),width:z.number().int().min(640).max(1920).default(1440),quality:z.number().int().min(25).max(85).default(72)}),
     annotations:{readOnlyHint:true,destructiveHint:false,idempotentHint:true,openWorldHint:false}
   },async ({screen,onlyIfChanged,threshold,width,quality})=>{
     const shot=await getFastDesktopFrame(screen,width,quality,20000);
