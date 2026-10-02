@@ -32,7 +32,7 @@ async function startCapture(streamId) {
     audio:{mandatory:{chromeMediaSource:"desktop",chromeMediaSourceId:streamId}}
   }).catch(()=>navigator.mediaDevices.getUserMedia({video:{mandatory:{chromeMediaSource:"desktop",chromeMediaSourceId:streamId,maxFrameRate:60}},audio:false}));
   await connectCaptureSocket();
-  const candidates=["video/webm;codecs=vp9,opus","video/webm;codecs=vp8,opus","video/webm"];
+  const candidates=["video/webm;codecs=vp8,opus","video/webm;codecs=vp9,opus","video/webm"];
   const mimeType=candidates.find(type=>MediaRecorder.isTypeSupported(type))||"";
   function startRecorder() {
     if (!stream || socket?.readyState !== WebSocket.OPEN) return;
@@ -58,7 +58,7 @@ async function startCapture(streamId) {
     const current=recorder;
     if(!current || current.state!=="recording")return;
     current.addEventListener("stop",startRecorder,{once:true}); current.stop();
-  },4000);
+  },1000);
   stream.getTracks().forEach(track=>track.addEventListener("ended",stopCapture,{once:true}));
   sendJson({type:"capture_state",active:true,mimeType:recorder.mimeType||mimeType,audio:stream.getAudioTracks().length>0});
   notify(true,{mimeType:recorder.mimeType||mimeType});

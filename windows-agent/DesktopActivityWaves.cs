@@ -6,6 +6,8 @@ internal sealed class DesktopActivityWaves : IDisposable
  readonly List<WaveWindow> windows = new();
  readonly System.Windows.Forms.Timer timer = new() { Interval = 33 };
  DateTime untilUtc;
+ public bool Enabled {get;private set;}=true;
+ public void SetEnabled(bool enabled){Enabled=enabled;if(!enabled){timer.Stop();foreach(var window in windows)window.Hide();}}
  public DesktopActivityWaves()
  {
   foreach(var screen in Screen.AllScreens){
@@ -20,6 +22,7 @@ internal sealed class DesktopActivityWaves : IDisposable
  }
  public void Pulse()
  {
+  if(!Enabled)return;
   untilUtc=DateTime.UtcNow.AddMilliseconds(1700);
   foreach(var window in windows){if(!window.Visible)window.Show();window.Intensity=1;window.Invalidate();}
   if(!timer.Enabled)timer.Start();

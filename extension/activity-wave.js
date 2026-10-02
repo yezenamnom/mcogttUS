@@ -20,7 +20,13 @@
     document.documentElement.append(host);
   }
   host.hidden=true;
+  let effectsEnabled=true;
+  if(typeof chrome!=='undefined'&&chrome.storage){
+    chrome.storage.local.get(['activityEffectsEnabled']).then(value=>{effectsEnabled=value.activityEffectsEnabled!==false;if(!effectsEnabled)host.hidden=true;});
+    chrome.storage.onChanged?.addListener((changes,area)=>{if(area==='local'&&changes.activityEffectsEnabled){effectsEnabled=changes.activityEffectsEnabled.newValue!==false;if(!effectsEnabled)host.hidden=true;}});
+  }
   globalThis.__gptusShowWave=()=>{
+    if(!effectsEnabled)return;
     host.hidden=false;
     clearTimeout(globalThis.__gptusWaveTimeout);
     globalThis.__gptusWaveTimeout=setTimeout(()=>{host.hidden=true;},1800);
