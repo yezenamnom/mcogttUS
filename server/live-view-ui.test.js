@@ -50,14 +50,15 @@ test('viewer starts directly from authenticated resource state',()=>{
   assert.equal(h.calls.length,0);
 });
 
-test('expand button asks ChatGPT for fullscreen while keeping the composer available',async()=>{
+test('expand button grows inline and keeps ChatGPT below the viewer',async()=>{
   const state={connected:true,streamUrl:'wss://bridge/live?ticket=secret',monitors:[{index:0,name:'Primary',width:1200,height:800,primary:true}]};
   const h=harness(state,state);
   await h.elements.expand.listeners.click();
-  assert.deepEqual(h.displayModes,['fullscreen']);
-  assert.equal(h.elements.expand.textContent,'العودة للحجم العادي');
+  assert.deepEqual(h.displayModes,[]);
+  assert.equal(h.elements.expand.textContent,'الحجم العادي');
   await h.elements.expand.listeners.click();
-  assert.deepEqual(h.displayModes,['fullscreen','inline']);
+  assert.deepEqual(h.displayModes,[]);
+  assert.equal(h.elements.expand.textContent,'تكبير داخل المحادثة');
 });
 
 
