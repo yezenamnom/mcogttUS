@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 // Single-owner OAuth. Browser approval is intentionally manual, not auto-granted.
 export function createOwnerOAuth({secret,issuer,now=()=>Date.now()}) {
  issuer=issuer.replace(/\/$/,''); const resource=issuer+'/mcp';
+ const accessTtlSeconds=30*24*60*60;
  const requests=new Map(),codes=new Map(),completed=new Map(); let attempts=[];
  const random=()=>crypto.randomBytes(32).toString('base64url');
  const same=(a,b)=>{const x=Buffer.from(String(a)),y=Buffer.from(String(b));return x.length===y.length&&crypto.timingSafeEqual(x,y);};
@@ -65,7 +66,7 @@ export function createOwnerOAuth({secret,issuer,now=()=>Date.now()}) {
      // Chromium checks form-action on the 303 redirect too. Permit only the
      // exact registered and allowlisted callback, not arbitrary external hosts.
      res.writeHead(200,{'content-type':'text/html; charset=utf-8','cache-control':'no-store','referrer-policy':'same-origin','x-frame-options':'DENY','content-security-policy':`default-src 'none'; style-src 'unsafe-inline'; form-action 'self' ${b.redirect_uri}; frame-ancestors 'none'; base-uri 'none'`,'set-cookie':`${cookieName(id)}=${csrf}; HttpOnly; Secure; SameSite=Lax; Path=/oauth; Max-Age=300`});
-     res.end(`<!doctype html><html lang="ar" dir="rtl"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>ربط GPT US</title><style>body{font:18px system-ui;max-width:650px;margin:60px auto;padding:24px;background:#101824;color:#e7f3ff}input,button{font:inherit;padding:12px;margin:10px 0;max-width:100%;box-sizing:border-box}input{width:100%}</style><h1>موافقة صاحب الكمبيوتر</h1><p>هذا الربط يمنح ChatGPT أدوات قراءة الشاشة والتحكم بالماوس والملفات، ضمن صلاحيات برنامج Windows. لا توافق على طلب لم تبدأه بنفسك.</p><p>وجهة الرجوع: ${esc(b.redirect_uri)}</p><form method="post" action="/oauth/approve"><input type="hidden" name="request" value="${id}"><label>أدخل Bridge token من برنامجك بنفسك<input name="owner_token" type="password" required autocomplete="off"></label><button name="decision" value="allow">أوافق على ربط جهازي لمدة ساعة</button><button name="decision" value="deny" formnovalidate>رفض</button></form><p>لا ترسل الرمز في المحادثة. لا يتم وضعه في رابط الرجوع أو إرساله إلى ChatGPT.</p></html>`);return true;
+     res.end(`<!doctype html><html lang="ar" dir="rtl"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>ربط GPT US</title><style>body{font:18px system-ui;max-width:650px;margin:60px auto;padding:24px;background:#101824;color:#e7f3ff}input,button{font:inherit;padding:12px;margin:10px 0;max-width:100%;box-sizing:border-box}input{width:100%}</style><h1>موافقة صاحب الكمبيوتر</h1><p>هذا الربط يمنح ChatGPT أدوات قراءة الشاشة والتحكم بالماوس والملفات، ضمن صلاحيات برنامج Windows. لا توافق على طلب لم تبدأه بنفسك.</p><p>وجهة الرجوع: ${esc(b.redirect_uri)}</p><form method="post" action="/oauth/approve"><input type="hidden" name="request" value="${id}"><label>أدخل Bridge token من برنامجك بنفسك<input name="owner_token" type="password" required autocomplete="off"></label><button name="decision" value="allow">أوافق على ربط جهازي لمدة 30 يوماً</button><button name="decision" value="deny" formnovalidate>رفض</button></form><p>لا ترسل الرمز في المحادثة. لا يتم وضعه في رابط الرجوع أو إرساله إلى ChatGPT.</p></html>`);return true;
     }
     if(path==='/oauth/approve'&&req.method==='POST'){
      if(req.headers.origin!==issuer)throw Error('invalid_origin');
@@ -96,11 +97,11 @@ export function createOwnerOAuth({secret,issuer,now=()=>Date.now()}) {
      if(b.grant_type==='refresh_token'){
       const p=open(b.refresh_token,'refresh');
       if(b.client_id!==p.client_id||b.resource&&b.resource!==resource||p.iss!==issuer||p.aud!==resource||p.scope!=='computer:control')throw Error('invalid_grant');
-      json(res,200,{access_token:seal('access',{iss:issuer,aud:resource,scope:p.scope,client_id:p.client_id,exp:now()+3600000,nonce:random()}),token_type:'Bearer',expires_in:3600,scope:p.scope});return true;
+      json(res,200,{access_token:seal('access',{iss:issuer,aud:resource,scope:p.scope,client_id:p.client_id,exp:now()+accessTtlSeconds*1000,nonce:random()}),token_type:'Bearer',expires_in:accessTtlSeconds,scope:p.scope});return true;
      }
      const c=codes.get(b.code);codes.delete(b.code);
      if(!c||b.grant_type!=='authorization_code'||b.client_id!==c.client_id||b.redirect_uri!==c.redirect_uri||b.resource!==resource||!/^[A-Za-z0-9._~-]{43,128}$/.test(b.code_verifier||'')||!same(crypto.createHash('sha256').update(b.code_verifier).digest('base64url'),c.code_challenge))throw Error('invalid_grant');
-     json(res,200,{access_token:seal('access',{iss:issuer,aud:resource,scope:'computer:control',client_id:c.client_id,exp:now()+3600000,nonce:random()}),refresh_token:seal('refresh',{iss:issuer,aud:resource,scope:'computer:control',client_id:c.client_id,exp:now()+30*24*3600000,nonce:random()}),token_type:'Bearer',expires_in:3600,scope:'computer:control'});return true;
+     json(res,200,{access_token:seal('access',{iss:issuer,aud:resource,scope:'computer:control',client_id:c.client_id,exp:now()+accessTtlSeconds*1000,nonce:random()}),refresh_token:seal('refresh',{iss:issuer,aud:resource,scope:'computer:control',client_id:c.client_id,exp:now()+accessTtlSeconds*1000,nonce:random()}),token_type:'Bearer',expires_in:accessTtlSeconds,scope:'computer:control'});return true;
     }
     if(path==='/oauth/approve'&&req.method==='GET'){
      notice(req,res,400,{error:'invalid_request',reason:'request_missing',error_description:notices.request_missing});return true;
@@ -118,3 +119,4 @@ export function createOwnerOAuth({secret,issuer,now=()=>Date.now()}) {
   }
  };
 }
+
