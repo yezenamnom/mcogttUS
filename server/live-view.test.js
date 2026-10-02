@@ -62,6 +62,10 @@ test("private live-view resource, auth, monitor selection and frame delivery", a
     assert.deepEqual(tools.find(t => t.name === "live_view_state")._meta.ui.visibility, ["app"]);
     assert.equal(tools.find(t => t.name === "open_smart_panel")._meta.ui.resourceUri, "ui://gpt-us/smart-actions.html");
     assert.deepEqual(tools.find(t => t.name === "smart_action_state")._meta.ui.visibility, ["app"]);
+    assert.equal(tools.find(t => t.name === "desktop_observe")._meta.ui.resourceUri, "ui://gpt-us/desktop-vision-v1.html");
+    const visionResource = await rpc(32, "resources/read", { uri: "ui://gpt-us/desktop-vision-v1.html" });
+    assert.match(visionResource.result.contents[0].text, /setWidgetState/);
+    assert.match(visionResource.result.contents[0].text, /imageIds/);
     const smartResource = await rpc(30, "resources/read", { uri: "ui://gpt-us/smart-actions.html" });
     assert.match(smartResource.result.contents[0].text, /الخطوة التالية/);
     const smartOpened = await rpc(31, "tools/call", { name: "open_smart_panel", arguments: { task: "غيّر الصوت" } });
@@ -117,7 +121,10 @@ test("private live-view resource, auth, monitor selection and frame delivery", a
     assert.ok(!JSON.stringify(frame.result.content).includes("base64"), "frame bytes stay out of model-visible text");
     assert.equal(commands.at(-1).command, "desktop_stream_frame");
     assert.equal(commands.at(-1).args.screen, 1);
-    const observed = await rpc(50, "tools/call", { name: "desktop_observe", arguments: { screen: 1 } });
+      const observed = await rpc(50, "tools/call", { name: "desktop_observe", arguments: { screen: 1 } });
+      assert.equal(observed.result._meta.snapshot.mimeType, "image/jpeg");
+      assert.equal(observed.result._meta.snapshot.screen, 1);
+      assert.ok(Buffer.from(observed.result._meta.snapshot.data, "base64").equals(jpeg));
     assert.equal(JSON.parse(observed.result.content.find(item => item.type === "text").text).changed, true);
     assert.equal(observed.result.structuredContent, undefined, "Vision results must not be replaced by JSON-only structured content");
     const unchanged = await rpc(51, "tools/call", { name: "desktop_observe", arguments: { screen: 1 } });
