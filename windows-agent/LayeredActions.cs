@@ -14,8 +14,9 @@ internal static partial class Program
         if(id.Length==0&&name.Length==0)throw new ArgumentException("Specify automationId or exact name");
         var condition=id.Length>0?new PropertyCondition(AutomationElement.AutomationIdProperty,id):new PropertyCondition(AutomationElement.NameProperty,name);
         var matches=root.FindAll(TreeScope.Descendants,condition);
-        if(matches.Count!=1)return null;
-        var element=matches[0];if(!element.Current.IsEnabled||element.Current.IsOffscreen)return null;
+        if(matches.Count>1)throw new InvalidOperationException("Ambiguous UIA target; reselect explicitly");
+        if(matches.Count==0)return null;
+        var element=matches[0];if(!element.Current.IsEnabled)throw new InvalidOperationException("UIA target disabled");if(element.Current.IsOffscreen)return null;
         return element;
     }
     static object ObserveLayered(JsonElement args){
@@ -34,7 +35,8 @@ internal static partial class Program
             var result=await DesktopControl(payload);return new{executed=true,layer,result};
         }
         if(layer=="uia"){
-            var element=FindTargetElement(args);if(element==null)return new{notExecuted=true,retrySafe=true,reason="Element missing, disabled, hidden or ambiguous"};
+            if(S(args,"automationId").Length==0&&S(args,"name").Length==0)return new{notExecuted=true,retrySafe=true,reason="No UIA target reference; inspected vision coordinates may be used"};
+            AutomationElement? element;try{element=FindTargetElement(args);}catch(InvalidOperationException error){return new{notExecuted=true,retrySafe=false,reason=error.Message};}if(element==null)return new{notExecuted=true,retrySafe=true,reason="Element missing or hidden"};
             if(action=="click"&&element.TryGetCurrentPattern(InvokePattern.Pattern,out var invoke)){RequirePermission("mouse");((InvokePattern)invoke).Invoke();return new{executed=true,layer};}
             if(action=="type"&&element.TryGetCurrentPattern(ValuePattern.Pattern,out var value)){RequirePermission("keyboard");if(element.Current.IsPassword)throw new Exception("Protected field cannot be verified");((ValuePattern)value).SetValue(S(args,"text"));return new{executed=true,layer};}
             if(action=="select"&&element.TryGetCurrentPattern(SelectionItemPattern.Pattern,out var selected)){RequirePermission("mouse");((SelectionItemPattern)selected).Select();return new{executed=true,layer};}

@@ -17,3 +17,11 @@ test('browser restart invalidates reused tab identifiers and explicit mismatches
  await assert.rejects(vm.runInContext('targetTab({tabId:99})',h.context),/differs/);
  delete h.session.targetSession;await assert.rejects(vm.runInContext('targetTab({})',h.context),/session changed/);
 });
+test('ambiguous and disabled DOM elements cannot fall through to a mouse click',()=>{
+ let clicks=0;const element={disabled:true,type:'text',tagName:'BUTTON',innerText:'Save',getAttribute:()=>null,getBoundingClientRect:()=>({x:0,y:0,width:20,height:20}),click:()=>clicks++};
+ for(const matches of [[element],[element,element]]){
+ const context={document:{querySelectorAll:()=>matches,body:{innerText:''},title:'Test'},location:{href:'https://example.com'},scrollY:0};vm.createContext(context);vm.runInContext(source.slice(source.indexOf('function layeredDOM'),source.indexOf('async function browserLayerAct')),context);
+ const result=vm.runInContext('layeredDOM({selector:"button",action:"click"})',context);
+ assert.equal(result.notExecuted,true);assert.equal(result.retrySafe,false);
+ }assert.equal(clicks,0);
+});

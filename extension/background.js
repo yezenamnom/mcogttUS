@@ -1,7 +1,7 @@
 let ws = null;
 let reconnectTimer = null;
 let pingTimer = null;
-const EXT_VERSION = "0.11.0";
+const EXT_VERSION = "0.12.0";
 const domState = new Map();
 const cdpAttached = new Set();
 const networkState = new Map();
@@ -149,8 +149,13 @@ function layeredDOM(args){
  const secret=element?.type==="password";
  const state={url:location.href,title:document.title,text:(document.body?.innerText||"").slice(0,20000),element:element?{exists:true,name:element.getAttribute("aria-label")||element.innerText||"",value:secret?"[REDACTED]":element.value,disabled:!!element.disabled,bounds:{x:rect.x,y:rect.y,width:rect.width,height:rect.height}}:null,scrollY};
  if(args.observe)return state;
- if(!element||element.disabled||!rect.width||!rect.height)return {notExecuted:true,retrySafe:true,reason:"Element missing, ambiguous, disabled or hidden"};
+ if(matches.length>1||element?.disabled)return {notExecuted:true,retrySafe:false,reason:"Target ambiguous or disabled; reselect explicitly"};
+ if(!element||!rect.width||!rect.height)return {notExecuted:true,retrySafe:true,reason:"Element missing or hidden"};
  if(secret)return {notExecuted:true,retrySafe:false,reason:"Protected field cannot be verified"};
+ if(args.action==='select'&&element.tagName==='SELECT'){
+   if(![...element.options].some(option=>option.value===String(args.text)))return {notExecuted:true,retrySafe:false,reason:'Option value unavailable'};
+   element.value=String(args.text);element.dispatchEvent(new Event('input',{bubbles:true}));element.dispatchEvent(new Event('change',{bubbles:true}));return {executed:true};
+ }
  if(args.action==="click"){element.click();return {executed:true};}
  if(args.action==="type"){
   const prototype=element.tagName==="TEXTAREA"?HTMLTextAreaElement.prototype:HTMLInputElement.prototype;
@@ -169,10 +174,12 @@ async function browserLayerAct(tabId,args){
    const {nodes}=await cdp(tabId,"Accessibility.getFullAXTree");
    const matches=nodes.filter(n=>!n.ignored&&n.name?.value===args.name&&n.backendDOMNodeId);
    if(matches.length!==1)return {notExecuted:true,retrySafe:true,reason:"AX target missing or ambiguous"};
+   if(matches[0].properties?.some(p=>p.name==='disabled'&&p.value?.value===true))return {notExecuted:true,retrySafe:false,reason:'AX target disabled'};
    const result=await cdp(tabId,"DOM.getBoxModel",{backendNodeId:matches[0].backendDOMNodeId});box=result.model.content;
   }else{
    const state=await runInTab(tabId,layeredDOM,[{...args,observe:true}]);
    if(!state.element)return {notExecuted:true,retrySafe:true,reason:"CDP target unavailable"};
+   if(state.element.disabled)return {notExecuted:true,retrySafe:false,reason:'CDP target disabled'};
    const b=state.element.bounds;box=[b.x,b.y,b.x+b.width,b.y,b.x+b.width,b.y+b.height,b.x,b.y+b.height];
   }
  }catch(error){return {notExecuted:true,retrySafe:true,reason:error.message};}

@@ -25,3 +25,21 @@ test('target screen window tab and element survive store reload',()=>{
  const dir=mkdtempSync(join(tmpdir(),'gpt-targets-'));
  try{const path=join(dir,'targets.json'),store=new TargetState(path);store.set('desktop',{hwnd:123,screen:1,element:{automationId:'save'}});store.set('browser',{tabId:42,element:{selector:'#submit'}});const restored=new TargetState(path);assert.equal(restored.get('desktop').hwnd,123);assert.equal(restored.get('desktop').screen,1);assert.equal(restored.get('browser').element.selector,'#submit');}finally{rmSync(dir,{recursive:true,force:true});}
 });
+test('delayed UI change is observed repeatedly without repeating the action',async()=>{
+ let reads=0,actions=0;const result=await verifiedControl({settleMs:0,verificationMs:500,layers:['dom','vision'],expect:{path:'url',operator:'equals',value:'new'},observe:async()=>({url:++reads>=3?'new':'old'}),act:async()=>{actions++;return {executed:true};}});
+ assert.equal(result.verified,true);assert.equal(actions,1);assert.equal(result.observations,2);
+});
+test('failed observation and closed target send no action',async()=>{
+ for(const observe of [async()=>{throw Error('offline')},async()=>({targetClosed:true})]){
+ let actions=0;const result=await verifiedControl({observe,act:async()=>{actions++},layers:['os'],expect:{path:'window',operator:'absent'}});
+ assert.equal(actions,0);assert.equal(result.verified,false);
+ }
+});
+test('target commands serialize and failures release the queue',async()=>{
+ const dir=mkdtempSync(join(tmpdir(),'gpt-queue-'));try{
+ const store=new TargetState(join(dir,'targets.json')),events=[];
+ const first=store.run('desktop',async()=>{events.push('first');await new Promise(r=>setTimeout(r,10));throw Error('failed');});
+ const second=store.run('desktop',async()=>{events.push('second');return 2;});
+ await assert.rejects(first);assert.equal(await second,2);assert.deepEqual(events,['first','second']);
+ }finally{rmSync(dir,{recursive:true,force:true});}
+});

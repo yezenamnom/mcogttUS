@@ -19,9 +19,16 @@ test("MCP routes combined mouse operations to desktop and serves health",async()
   socket=new WebSocket(base.replace("http:","ws:")+"/desktop?token="+token);
   await new Promise((resolve,reject)=>{socket.once("open",resolve);socket.once("error",reject);});
   const commands=[];
+  let minimized=false;
   socket.on("message",data=>{
    const m=JSON.parse(data);commands.push(m);
-   const result=m.command==='desktop_screenshot'?{data:'QUJD',mimeType:'image/png',width:2560,height:1440}:{executed:true,kind:m.args.kind,x:m.args.x,y:m.args.y};
+   let result=m.command==='desktop_screenshot'?{data:'QUJD',mimeType:'image/png',width:2560,height:1440}:{executed:true,kind:m.args.kind,x:m.args.x,y:m.args.y};
+   if(m.command==='desktop_control'&&m.args.kind==='select')result={selected:true,window:{hwnd:m.args.hwnd}};
+   if(m.command==='desktop_layer_observe')result={window:{hwnd:123,minimized}};
+   if(m.command==='desktop_layer_act'){
+     if(m.args.action==='click')result={notExecuted:true,retrySafe:false,reason:'disabled'};
+     else{minimized=m.args.action==='minimize';result={executed:true};}
+   }
    socket.send(JSON.stringify({type:"result",id:m.id,ok:true,result}));
   });
   let session;
@@ -69,6 +76,13 @@ test("MCP routes combined mouse operations to desktop and serves health",async()
   const screenshotMeta=JSON.parse(screenshot.result.content[1].text);
   assert.equal(screenshotMeta.results[0].result.width,2560);
   assert.equal(screenshotMeta.results[0].result.data,undefined);
+  await rpc(8,'tools/call',{name:'control_target',arguments:{domain:'desktop',hwnd:123}});
+  const steps=[{domain:'desktop',action:'minimize',expect:{path:'window.minimized',operator:'equals',value:true}},{domain:'desktop',action:'restore',expect:{path:'window.minimized',operator:'equals',value:false}}];
+  const batch=await rpc(9,'tools/call',{name:'verified_control_batch',arguments:{actions:steps}});
+  assert.equal(JSON.parse(batch.result.content[0].text).completed,true);
+  const stopped=await rpc(10,'tools/call',{name:'verified_control_batch',arguments:{actions:[{domain:'desktop',action:'click',expect:{path:'window.minimized',operator:'equals',value:false}},...steps]}});
+  const stopResult=JSON.parse(stopped.result.content[0].text);
+  assert.equal(stopResult.completed,false);assert.equal(stopResult.results.length,1);assert.equal(stopResult.results[0].status,'blocked');
   assert.equal((await (await fetch(base+"/health")).json()).desktopConnected,true);
  }finally{socket?.close();child.kill();await new Promise(r=>child.exitCode!==null?r():child.once("exit",r));}
 });

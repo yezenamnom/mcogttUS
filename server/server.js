@@ -204,7 +204,7 @@ function callDesktop(command, args = {}, timeoutMs = 30000) {
 }
 
 function makeMcpServer() {
-  const server = new McpServer({ name: "gpt-us-browser-desktop", version: "0.8.0" }, { instructions: instructionStore.get().text });
+  const server = new McpServer({ name: "gpt-us-browser-desktop", version: "0.8.1" }, { instructions: instructionStore.get().text });
 
   // Some ChatGPT connector hosts forward the app-qualified tool name back to
   // the MCP server (for example `gpt_us.bridge_info`) instead of stripping the
@@ -638,7 +638,7 @@ function makeMcpServer() {
   const desktopText = async (command,args={},timeout=30000) => ({ content:[{type:"text",text:JSON.stringify(await callDesktop(desktopAlias(command),args,timeout),null,2)}] });
   server.registerTool("gpt_us_instructions",{description:"Read the current GPT US operating instructions and version. These are application guidance only, subordinate to ChatGPT system and safety instructions.",inputSchema:z.object({}),annotations:{readOnlyHint:true}},async()=>({content:[{type:"text",text:instructionStore.get().text}]}));
   const targetElement=z.object({selector:z.string().min(1).optional(),name:z.string().min(1).optional(),automationId:z.string().min(1).optional()});
-  server.registerTool("control_target",{description:"Select and persist the exact screen/window/tab/element for verified layered control. No implicit target switching. Desktop identity is revalidated after restart.",inputSchema:z.object({domain:z.enum(["desktop","browser"]),hwnd:z.number().int().positive().optional(),pid:z.number().int().positive().optional(),tabId:z.number().int().optional(),screen:z.number().int().min(0).optional(),element:targetElement.optional()})},async args=>{
+  server.registerTool("control_target",{description:"Select and persist the exact screen/window/tab/element for verified layered control. No implicit target switching. Desktop identity is revalidated after restart.",inputSchema:z.object({domain:z.enum(["desktop","browser"]),hwnd:z.number().int().positive().optional(),pid:z.number().int().positive().optional(),tabId:z.number().int().optional(),screen:z.number().int().min(0).optional(),element:targetElement.optional()})},async args=>targets.run(args.domain,async()=>{
     let selected;
     if(args.domain==="desktop"){
       if(args.hwnd===undefined&&args.pid===undefined)throw Error("Supply hwnd or pid");
@@ -649,17 +649,18 @@ function makeMcpServer() {
     }
     const state=targets.set(args.domain,{...args,identity:selected});
     return {content:[{type:"text",text:JSON.stringify(state)}]};
-  });
+  }));
   server.registerTool("control_target_state",{description:"Read persistent screen/window/tab/element target references. Saved references are not proof that the target is still alive.",inputSchema:z.object({})},async()=>({content:[{type:"text",text:JSON.stringify(targets.state)}]}));
   server.registerTool("browser_accessibility_tree",{description:"Read the pinned browser Accessibility Tree via CDP, including names, roles and node references; field values are omitted.",inputSchema:z.object({})},async()=>({content:[{type:"text",text:JSON.stringify(await callBrowser("accessibility_tree",{}))}]}));
-  server.registerTool("verified_control",{description:"Mandatory Observe→Act→Observe→Compare for layered actions. Auto-fallback only when a layer proves no action was sent. Returns verified/status/comparison; never treats an acknowledgement as success. Vision/mouse is last and opt-in after inspecting coordinates.",inputSchema:z.object({
+  const verifiedActionSchema=z.object({
     domain:z.enum(["desktop","browser"]),action:z.enum(["activate","minimize","maximize","restore","close","click","type","select"]),text:z.string().max(20000).optional(),
     allowVision:z.boolean().default(false),x:z.number().int().optional(),y:z.number().int().optional(),
     expect:z.object({path:z.enum(["window.active","window.minimized","window.maximized","window.title","window","element.name","element.value","element.selected","element","url","title","text","scrollY","cursor.x","cursor.y"]),operator:z.enum(["equals","contains","absent","changed"]),value:z.any().optional()})
-  }).refine(a=>!a.allowVision||(a.x!==undefined&&a.y!==undefined),"Vision fallback needs inspected x/y")},async args=>{
+  }).refine(a=>!a.allowVision||(a.x!==undefined&&a.y!==undefined),"Vision fallback needs inspected x/y");
+  async function executeVerifiedAction(args){
     const target=targets.get(args.domain);const params={...target.element,...args};
     const result=await verifiedControl({
-      expect:args.expect,layers:args.domain==="desktop"?["os","uia","vision"]:["dom","accessibility","cdp","vision"],
+      expect:args.expect,layers:args.domain==="desktop"?(args.action==='click'||args.action==='type'||args.action==='select'?['uia','vision']:['os']):["dom","accessibility","cdp","vision"],
       observe:async()=>{
         const state=await (args.domain==="desktop"?callDesktop("desktop_layer_observe",params):callBrowser("layer_observe",params));
         const expected=args.domain==="desktop"?target.identity.window?.hwnd:target.identity.tab?.id;
@@ -684,8 +685,14 @@ function makeMcpServer() {
         return {executed:true,calibration,result};
       }
     });
-    return {content:[{type:"text",text:JSON.stringify(result)}]};
-  });
+    return result;
+  }
+  server.registerTool('verified_control',{description:'Observe, execute through the appropriate layer, then poll and compare the expected effect. Never replay uncertain actions. Same-domain target changes and actions serialize.',inputSchema:verifiedActionSchema},async args=>targets.run(args.domain,async()=>({content:[{type:'text',text:JSON.stringify(await executeVerifiedAction(args))}]})));
+  server.registerTool('verified_control_batch',{description:'Execute up to 12 related actions in one MCP call, verifying every step and stopping on the first unverified outcome. Uses the persistent target. Never continue a sequence after uncertainty.',inputSchema:z.object({actions:z.array(verifiedActionSchema).min(1).max(12)}).refine(value=>value.actions.every(action=>action.domain===value.actions[0].domain),'One target domain per batch')},async({actions})=>targets.run(actions[0].domain,async()=>{
+    const results=[];
+    for(const action of actions){const result=await executeVerifiedAction(action);results.push(result);if(!result.verified)break;}
+    return {content:[{type:'text',text:JSON.stringify({completed:results.length===actions.length&&results.every(result=>result.verified),requested:actions.length,executedSteps:results.length,results})}]};
+  }));
   server.registerTool("desktop_process_api",{description:"Start an explicit executable or stop an exact PID/start-time identity through .NET Process APIs; observes process IDs before and after and verifies the requested effect. Requires commands and processes permissions.",inputSchema:z.object({action:z.enum(["start","stop"]),executable:z.string().optional(),arguments:z.array(z.string()).max(30).optional(),pid:z.number().int().positive().optional(),startTicks:z.string().regex(/^\d+$/).optional()})},async args=>desktopText("desktop_process_control",args));
   server.registerTool("desktop_powershell",{description:"Run explicit user-authorized PowerShell with the existing commands permission; never generate a shell fallback silently. Nonzero exit or unmatched stdout is not success; output matching verifies the command response, not arbitrary UI effects.",inputSchema:z.object({command:z.string().min(1).max(4000),expectStdoutContains:z.string().min(1),timeoutMs:z.number().int().min(1000).max(30000).optional()})},async args=>{
     const before=await callDesktop("desktop_system_info",{});
@@ -867,7 +874,7 @@ const httpServer = http.createServer(async (req, res) => {
     res.end(JSON.stringify({
       ok: true,
       service: "comet-chatgpt-bridge",
-      version: "0.8.0",
+      version: "0.8.1",
       mcp: "ready",
       browserConnected: !!browserSocket && browserSocket.readyState === WebSocket.OPEN,
       browserConnectedAt,
@@ -880,7 +887,7 @@ const httpServer = http.createServer(async (req, res) => {
 
   if (url.pathname === "/" && req.method === "GET") {
     res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({ service: "comet-chatgpt-bridge", version: "0.8.0", status: "ok", mcp: "/mcp" }));
+    res.end(JSON.stringify({ service: "comet-chatgpt-bridge", version: "0.8.1", status: "ok", mcp: "/mcp" }));
     return;
   }
 
@@ -1131,7 +1138,7 @@ wss.on("connection", (socket, req) => {
 });
 
 httpServer.listen(PORT, "0.0.0.0", () => {
-  console.log(`Comet ChatGPT Bridge v0.8.0 listening on 0.0.0.0:${PORT}`);
+  console.log(`Comet ChatGPT Bridge v0.8.1 listening on 0.0.0.0:${PORT}`);
   console.log("MCP v2 handler ready at /mcp | WSS /browser + /desktop + /capture | health /health");
 });
 
