@@ -74,6 +74,13 @@ test("private live-view resource, auth, monitor selection and frame delivery", a
     const resource = await rpc(3, "resources/read", { uri: "ui://gpt-us/live-view-v30.html" });
     assert.match(resource.result.contents[0].text, /الكمبيوتر المباشر/);
     assert.match(resource.result.contents[0].text, /const embeddedState = null/);
+    for(let version=23;version<=29;version++){
+      const oldUri=`ui://gpt-us/live-view-v${version}.html`;
+      const cachedResource=await rpc(100+version,'resources/read',{uri:oldUri});
+      assert.equal(cachedResource.error,undefined);
+      assert.equal(cachedResource.result.contents[0].uri,oldUri);
+      assert.match(cachedResource.result.contents[0].text,/const embeddedState = null/);
+    }
     assert.equal(resource.result.contents[0].mimeType, "text/html;profile=mcp-app");
     assert.equal(resource.result.contents[0]._meta["openai/ui"].preferredDisplayMode, "fullscreen");
     assert.deepEqual(resource.result.contents[0]._meta["openai/ui"].availableDisplayModes, ["fullscreen"]);

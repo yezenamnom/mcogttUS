@@ -330,6 +330,12 @@ function makeMcpServer() {
   }] });
   const liveResourceConfig = { description: "Private live desktop viewer inside ChatGPT", mimeType: "text/html;profile=mcp-app" };
   server.registerResource("gpt-us-live-view", LIVE_VIEW_URI, liveResourceConfig, liveResource(LIVE_VIEW_URI));
+  // ChatGPT may retain outputTemplate metadata from an earlier tool discovery.
+  // Keep those advertised resources readable after deploying a new viewer.
+  for(let version=23;version<=29;version++){
+    const uri=`ui://gpt-us/live-view-v${version}.html`;
+    server.registerResource(`gpt-us-live-view-v${version}-compat`,uri,liveResourceConfig,liveResource(uri));
+  }
   server.registerResource("gpt-us-live-view-stable-compat", "ui://gpt-us/live-view.html", liveResourceConfig, liveResource("ui://gpt-us/live-view.html"));
   server.registerResource("gpt-us-live-view-v18-compat", "ui://gpt-us/live-view-v18.html", liveResourceConfig, liveResource("ui://gpt-us/live-view-v18.html"));
   server.registerResource("gpt-us-live-view-v19-compat", "ui://gpt-us/live-view-v19.html", liveResourceConfig, liveResource("ui://gpt-us/live-view-v19.html"));
