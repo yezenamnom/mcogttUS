@@ -1,2 +1,8 @@
+const SOURCE_BUILD="0.10.1";
+if(localStorage.getItem("gptUsSourceBuild")!==SOURCE_BUILD){
+ localStorage.setItem("gptUsSourceBuild",SOURCE_BUILD);
+ setTimeout(()=>chrome.runtime.reload(),150);
+}
 const ids=["url","token","cursorSize","cursorSpeed","cursorColor","clickColor","cursorEnabled","clickEffect"];const e=Object.fromEntries(ids.map(id=>[id,document.getElementById(id)]));chrome.storage.local.get(["bridgeUrl","bridgeToken","cursorSize","cursorSpeed","cursorColor","clickColor","cursorEnabled","clickEffect"]).then(v=>{e.url.value=v.bridgeUrl||"";e.token.value=v.bridgeToken||"";e.cursorSize.value=v.cursorSize||30;e.cursorSpeed.value=v.cursorSpeed||180;e.cursorColor.value=v.cursorColor||"#27e9f5";e.clickColor.value=v.clickColor||"#27e9f5";e.cursorEnabled.checked=v.cursorEnabled!==false;e.clickEffect.checked=v.clickEffect!==false;});document.getElementById("save").onclick=async()=>{const bridgeUrl=e.url.value.trim().replace(/\/$/,""),bridgeToken=e.token.value.trim();if(!/^https:\/\//i.test(bridgeUrl)||!bridgeToken){status.textContent="Enter an HTTPS bridge URL and token.";return;}await chrome.storage.local.set({bridgeUrl,bridgeToken,cursorSize:+e.cursorSize.value,cursorSpeed:+e.cursorSpeed.value,cursorColor:e.cursorColor.value,clickColor:e.clickColor.value,cursorEnabled:e.cursorEnabled.checked,clickEffect:e.clickEffect.checked});status.textContent="Saved. Settings apply to new cursor actions.";};
 document.querySelector('h1').textContent='Comet ChatGPT Bridge v'+chrome.runtime.getManifest().version;
+
