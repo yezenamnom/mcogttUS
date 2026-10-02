@@ -55,8 +55,8 @@ test("private live-view resource, auth, monitor selection and frame delivery", a
     const initialized = await rpc(1, "initialize", { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "live-view-test", version: "1" } });
     assert.match(initialized.result.instructions, /نفّذ أولًا، ثم تحقق/);
     const tools = (await rpc(2, "tools/list", {})).result.tools;
-    assert.equal(tools.find(t => t.name === "open_live_view")._meta.ui.resourceUri, "ui://gpt-us/live-view-v25.html");
-    assert.equal(tools.find(t => t.name === "open_live_view")._meta["openai/outputTemplate"], "ui://gpt-us/live-view-v25.html");
+    assert.equal(tools.find(t => t.name === "open_live_view")._meta.ui.resourceUri, "ui://gpt-us/live-view-v26.html");
+    assert.equal(tools.find(t => t.name === "open_live_view")._meta["openai/outputTemplate"], "ui://gpt-us/live-view-v26.html");
     assert.equal(tools.find(t => t.name === "open_live_view")._meta["openai/widgetAccessible"], true);
     assert.deepEqual(tools.find(t => t.name === "live_view_frame")._meta.ui.visibility, ["app"]);
     assert.deepEqual(tools.find(t => t.name === "live_view_state")._meta.ui.visibility, ["app"]);
@@ -66,12 +66,12 @@ test("private live-view resource, auth, monitor selection and frame delivery", a
     assert.match(smartResource.result.contents[0].text, /الخطوة التالية/);
     const smartOpened = await rpc(31, "tools/call", { name: "open_smart_panel", arguments: { task: "غيّر الصوت" } });
     assert.equal(smartOpened.result.structuredContent.phase, "idle");
-    const resource = await rpc(3, "resources/read", { uri: "ui://gpt-us/live-view-v25.html" });
+    const resource = await rpc(3, "resources/read", { uri: "ui://gpt-us/live-view-v26.html" });
     assert.match(resource.result.contents[0].text, /الكمبيوتر المباشر/);
     assert.match(resource.result.contents[0].text, /const embeddedState = null/);
     assert.equal(resource.result.contents[0].mimeType, "text/html;profile=mcp-app");
-    assert.equal(resource.result.contents[0]._meta["openai/ui"].preferredDisplayMode, "pip");
-    assert.deepEqual(resource.result.contents[0]._meta["openai/ui"].availableDisplayModes, ["inline", "pip"]);
+    assert.equal(resource.result.contents[0]._meta["openai/ui"].preferredDisplayMode, "fullscreen");
+    assert.deepEqual(resource.result.contents[0]._meta["openai/ui"].availableDisplayModes, ["inline", "fullscreen"]);
     assert.deepEqual(resource.result.contents[0]._meta.ui.csp, { connectDomains: ["https://mcogttus-production.up.railway.app", "wss://mcogttus-production.up.railway.app"], resourceDomains: [] });
     const opened = await rpc(4, "tools/call", { name: "open_live_view", arguments: {} });
     const bootstrap = opened.result.structuredContent;
@@ -121,7 +121,9 @@ test("private live-view resource, auth, monitor selection and frame delivery", a
     assert.equal(observed.result.structuredContent.changed, true);
     const unchanged = await rpc(51, "tools/call", { name: "desktop_observe", arguments: { screen: 1 } });
     assert.equal(unchanged.result.structuredContent.changed, false);
-    assert.ok(!unchanged.result.content.some(item => item.type === "image"));
+    assert.ok(unchanged.result.content.some(item => item.type === "image"), "A new question receives a fresh image even when the desktop is unchanged");
+    const conditional = await rpc(52, "tools/call", { name: "desktop_observe", arguments: { screen: 1, onlyIfChanged: true } });
+    assert.ok(!conditional.result.content.some(item => item.type === "image"), "Explicit change-only observation remains available");
     const invalid = await rpc(6, "tools/call", { name: "live_view_frame", arguments: { screen: 7 } });
     assert.equal(invalid.result.isError, true);
     assert.ok(!commands.some(c => c.command === "desktop_stream_frame" && c.args.screen === 7));
