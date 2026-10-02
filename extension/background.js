@@ -1,12 +1,46 @@
 let ws = null;
 let reconnectTimer = null;
 let pingTimer = null;
-const EXT_VERSION = "0.9.4";
+const EXT_VERSION = "0.10.0";
 const domState = new Map();
 const cdpAttached = new Set();
 const networkState = new Map();
 let commandQueue = Promise.resolve();
 let reconnectAttempt = 0;
+let captureActive = false;
+
+async function ensureOffscreenDocument() {
+  const url = chrome.runtime.getURL("offscreen.html");
+  const contexts = await chrome.runtime.getContexts({ contextTypes: ["OFFSCREEN_DOCUMENT"], documentUrls: [url] });
+  if (contexts.length) return;
+  await chrome.offscreen.createDocument({ url: "offscreen.html", reasons: ["USER_MEDIA"], justification: "Stream a user-selected tab, window, or screen to the private GPT US viewer." });
+}
+
+async function toggleBrowserCapture(tab) {
+  if (captureActive) {
+    await ensureOffscreenDocument();
+    await chrome.runtime.sendMessage({ type: "capture_stop" });
+    captureActive = false;
+    chrome.action.setBadgeText({ text: ws?.readyState === WebSocket.OPEN ? "ON" : "OFF" });
+    return;
+  }
+  const streamId = await new Promise((resolve, reject) => {
+    chrome.desktopCapture.chooseDesktopMedia(["screen", "window", "tab", "audio"], tab, id => id ? resolve(id) : reject(new Error("Capture selection cancelled")));
+  });
+  await ensureOffscreenDocument();
+  const result = await chrome.runtime.sendMessage({ type: "capture_start", streamId });
+  if (!result?.ok) throw new Error(result?.error || "Capture failed to start");
+  captureActive = true;
+  chrome.action.setBadgeText({ text: "LIVE" });
+  chrome.action.setBadgeBackgroundColor({ color: "#7c3aed" });
+}
+
+chrome.runtime.onMessage.addListener(message => {
+  if (message?.type !== "capture_state") return;
+  captureActive = !!message.active;
+  chrome.action.setBadgeText({ text: captureActive ? "LIVE" : (ws?.readyState === WebSocket.OPEN ? "ON" : "OFF") });
+  chrome.action.setBadgeBackgroundColor({ color: captureActive ? "#7c3aed" : (ws?.readyState === WebSocket.OPEN ? "#2e7d32" : "#9e9e9e") });
+});
 
 function getNetworkState(tabId){
   if(!networkState.has(tabId)) networkState.set(tabId,{order:[],byId:new Map()});
@@ -645,7 +679,9 @@ async function executeCommand(command,args={}){
       await chrome.storage.local.set({smartActions:stored});
       return {selected:true,number,label:option.label,prompt:option.prompt};
     }
-    case "bridge_info": { const t=await activeTab().catch(()=>null); return {extensionVersion:EXT_VERSION,connected:ws?.readyState===WebSocket.OPEN,activeTabId:t?.id||null,cdpAttached:[...cdpAttached],capabilities:["tabId","live_dom","dom_diff","deep_dom","shadow_dom","same_origin_iframes","element_map","viewport","wait_for","mouse_advanced","smooth_cursor","freehand_draw","native_mouse_path","keyboard_combo","drag_drop","zoom","parallel_actions","cdp","screenshots","forms","click_fallback"]}; }
+    case "bridge_info": { const t=await activeTab().catch(()=>null); return {extensionVersion:EXT_VERSION,connected:ws?.readyState===WebSocket.OPEN,captureActive,activeTabId:t?.id||null,cdpAttached:[...cdpAttached],capabilities:["tabId","live_dom","dom_diff","deep_dom","shadow_dom","same_origin_iframes","element_map","viewport","wait_for","mouse_advanced","smooth_cursor","freehand_draw","native_mouse_path","keyboard_combo","drag_drop","zoom","parallel_actions","cdp","screenshots","browser_live_capture","system_audio","forms","click_fallback"]}; }
+    case "browser_capture_status": return { active:captureActive, requiresUserGesture:!captureActive, startHint:"Click the Comet ChatGPT Bridge toolbar icon and choose a tab, window, or screen." };
+    case "browser_capture_stop": await ensureOffscreenDocument(); await chrome.runtime.sendMessage({type:"capture_stop"}); captureActive=false; return {stopped:true};
     case "get_page": { const t=await tab(); const result=await runInTab(t.id,pageSnapshot,[Math.min(Math.max(Number(args.maxChars||30000),1000),100000)]); return {tabId:t.id,...result}; }
     case "get_viewport": { const t=await tab(); return {tabId:t.id,...await runInTab(t.id,viewportInfo,[])}; }
     case "element_map": { const t=await tab(); return {tabId:t.id,elements:await runInTab(t.id,elementMap,[])}; }
@@ -708,5 +744,9 @@ chrome.storage.onChanged.addListener((changes, areaName)=>{
   ws = null;
   setTimeout(connect, 300);
 });
-chrome.action.onClicked.addListener(()=>chrome.runtime.openOptionsPage());
+chrome.action.onClicked.addListener(tab=>toggleBrowserCapture(tab).catch(error=>{
+  chrome.action.setBadgeText({text:"ERR"}); chrome.action.setBadgeBackgroundColor({color:"#c62828"});
+  console.error("GPT US capture:",error);
+}));
 connect();
+
