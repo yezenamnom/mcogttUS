@@ -118,9 +118,10 @@ test("private live-view resource, auth, monitor selection and frame delivery", a
     assert.equal(commands.at(-1).command, "desktop_stream_frame");
     assert.equal(commands.at(-1).args.screen, 1);
     const observed = await rpc(50, "tools/call", { name: "desktop_observe", arguments: { screen: 1 } });
-    assert.equal(observed.result.structuredContent.changed, true);
+    assert.equal(JSON.parse(observed.result.content.find(item => item.type === "text").text).changed, true);
+    assert.equal(observed.result.structuredContent, undefined, "Vision results must not be replaced by JSON-only structured content");
     const unchanged = await rpc(51, "tools/call", { name: "desktop_observe", arguments: { screen: 1 } });
-    assert.equal(unchanged.result.structuredContent.changed, false);
+    assert.equal(JSON.parse(unchanged.result.content.find(item => item.type === "text").text).changed, false);
     assert.ok(unchanged.result.content.some(item => item.type === "image"), "A new question receives a fresh image even when the desktop is unchanged");
     const conditional = await rpc(52, "tools/call", { name: "desktop_observe", arguments: { screen: 1, onlyIfChanged: true } });
     assert.ok(!conditional.result.content.some(item => item.type === "image"), "Explicit change-only observation remains available");
