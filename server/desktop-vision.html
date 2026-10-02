@@ -15,16 +15,17 @@
       const status=document.getElementById('status');
       let started=false;
       let retryTimer=null;
-      function snapshotFromHost() {
+      function snapshotsFromHost() {
         const host=window.openai;
         const metadata=host?.toolResponseMetadata;
         const result=metadata?.mcp_tool_result||metadata?.call_tool_result||metadata;
-        return result?._meta?.snapshot||metadata?._meta?.snapshot||null;
+        const meta=result?._meta||metadata?._meta;
+        return meta?.snapshots||(meta?.snapshot?[meta.snapshot]:[]);
       }
       async function attach() {
         if(started) return;
-        const snapshot=snapshotFromHost();
-        if(!snapshot?.data) return;
+        const snapshots=snapshotsFromHost().filter(item=>item?.data);
+        if(!snapshots.length) return;
         started=true;
         const host=window.openai;
         if(typeof host?.uploadFile!=='function'||typeof host?.setWidgetState!=='function'||typeof host?.sendFollowUpMessage!=='function') {
@@ -32,30 +33,35 @@
           return;
         }
         try {
-          if(host.widgetState?.privateContent?.captureId===snapshot.id) {
-            status.textContent=`صورة الشاشة ${snapshot.screen+1} مرفقة بالمحادثة.`;
+          const captureId=snapshots.map(item=>item.id).join(',');
+          const screenNames=snapshots.map(item=>item.screen+1).join(' و');
+          if(host.widgetState?.privateContent?.captureId===captureId) {
+            status.textContent=`صورة الشاشة ${screenNames} مرفقة بالمحادثة.`;
             return;
           }
-          const binary=atob(snapshot.data);
-          const bytes=new Uint8Array(binary.length);
-          for(let i=0;i<binary.length;i++) bytes[i]=binary.charCodeAt(i);
-          const file=new File([bytes],`gpt-us-screen-${snapshot.screen+1}.jpg`,{type:snapshot.mimeType||'image/jpeg'});
-          const uploaded=await host.uploadFile(file,{library:false});
-          const fileId=uploaded?.fileId;
-          if(!fileId) throw new Error('لم يُرجع ChatGPT معرّف الصورة');
+          const imageIds=[];
+          for(const snapshot of snapshots) {
+            const binary=atob(snapshot.data);
+            const bytes=new Uint8Array(binary.length);
+            for(let i=0;i<binary.length;i++) bytes[i]=binary.charCodeAt(i);
+            const file=new File([bytes],`gpt-us-screen-${snapshot.screen+1}.jpg`,{type:snapshot.mimeType||'image/jpeg'});
+            const uploaded=await host.uploadFile(file,{library:false});
+            if(!uploaded?.fileId) throw new Error('لم يُرجع ChatGPT معرّف الصورة');
+            imageIds.push(uploaded.fileId);
+          }
           host.setWidgetState({
-            modelContent:`لقطة جديدة للشاشة ${snapshot.screen+1} جاهزة للتحليل. استند إلى الصورة المرفقة، لا إلى وصف سابق.`,
-            privateContent:{screen:snapshot.screen,captureId:snapshot.id},
-            imageIds:[fileId]
+            modelContent:`لقطة جديدة للشاشة ${screenNames} جاهزة للتحليل. استند إلى الصور المرفقة، لا إلى وصف سابق.`,
+            privateContent:{screens:snapshots.map(item=>item.screen),captureId},
+            imageIds
           });
-          status.textContent=`أُرفقت صورة الشاشة ${snapshot.screen+1} بالمحادثة.`;
+          status.textContent=`أُرفقت صورة الشاشة ${screenNames} بالمحادثة.`;
           async function sendWhenReady(attempt=0) {
             try {
               await host.sendFollowUpMessage({
-                prompt:`حلّل الصورة المرفقة للشاشة ${snapshot.screen+1} وأجب عن سؤال المستخدم الأخير حول ما يظهر فيها. الصورة مرفقة الآن؛ لا تطلب لقطة أخرى في هذه الرسالة. إن لم تكن الصورة مرئية لك، قل ذلك بوضوح.`,
+                prompt:`حلّل الصور المرفقة للشاشة ${screenNames} وأجب عن سؤال المستخدم الأخير حول ما يظهر فيها. الصور مرفقة الآن؛ لا تطلب لقطة أخرى في هذه الرسالة. إن لم تكن الصور مرئية لك، قل ذلك بوضوح.`,
                 scrollToBottom:false
               });
-              status.textContent=`أُرسلت صورة الشاشة ${snapshot.screen+1} للتحليل.`;
+              status.textContent=`أُرسلت صورة الشاشة ${screenNames} للتحليل.`;
             } catch(error) {
               if(/composer is unavailable/i.test(String(error?.message))&&attempt<20) {
                 status.textContent='الصورة مرفقة؛ بانتظار انتهاء رد ChatGPT لإرسالها للتحليل…';
