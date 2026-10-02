@@ -29,7 +29,7 @@ const LIVE_VIEW_HTML = readFileSync(new URL("./live-view.html", import.meta.url)
 const OPERATING_RULES = readFileSync(new URL("./OPERATING_RULES_AR.md", import.meta.url), "utf8");
 const SMART_URI = "ui://gpt-us/smart-actions.html";
 const SMART_HTML = readFileSync(new URL("./smart-actions.html", import.meta.url), "utf8");
-const VISION_URI = "ui://gpt-us/desktop-vision-v2.html";
+const VISION_URI = "ui://gpt-us/desktop-vision-v3.html";
 const VISION_HTML = readFileSync(new URL("./desktop-vision.html", import.meta.url), "utf8");
 let smartState = { revision: 0, phase: "idle", options: [], title: "الكمبيوتر" };
 let smartTask = "";
@@ -418,9 +418,10 @@ function makeMcpServer() {
   }, async ({ url }) => ({ content: [{ type: "text", text: JSON.stringify(await callBrowser("navigate", { url }), null, 2) }] }));
 
   server.registerTool("screenshot", {
-    description: "Capture one Windows monitor for ChatGPT vision. Monitor 1 is screen index 0. By default capture only the requested/first monitor so ChatGPT can inspect it directly. Set allScreens only when the user explicitly asks for every monitor. Temporary share links are opt-in.",
+    description: "Capture one Windows monitor for ChatGPT vision and attach its image to a follow-up message. Monitor 1 is screen index 0. By default capture only the requested/first monitor. Set allScreens only when the user explicitly asks for every monitor. Wait for the image-based follow-up before describing the screen. Temporary share links are opt-in.",
     inputSchema: z.object({ screen: z.number().int().min(0).max(15).default(0), allScreens: z.boolean().default(false), includeShareLink: z.boolean().default(false) }),
-    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    _meta: { ui: { resourceUri: VISION_URI }, "openai/outputTemplate": VISION_URI }
   }, async ({ screen, allScreens, includeShareLink }) => {
     const monitors = await callDesktop("desktop_monitors", {}, 30000);
     if (!Array.isArray(monitors) || monitors.length === 0) {
@@ -428,6 +429,7 @@ function makeMcpServer() {
     }
 
     const content = [];
+    const snapshots = [];
 
     const selectedMonitors = allScreens ? monitors : monitors.filter(m => Number(m.index) === screen);
     if (!selectedMonitors.length) throw new Error(`Monitor ${screen + 1} is unavailable`);
@@ -480,6 +482,7 @@ function makeMcpServer() {
         data: modelCopy.toString("base64"),
         mimeType: "image/jpeg"
       });
+      snapshots.push({id:`${screenIndex}:${Date.now()}`,screen:screenIndex,mimeType:"image/jpeg",data:modelCopy.toString("base64")});
 
       if (shareUrl) {
         content.push({
@@ -496,7 +499,7 @@ function makeMcpServer() {
       throw new Error("Desktop agent did not return any monitor screenshots");
     }
 
-    return { content };
+    return { content, _meta: { snapshots } };
   });
 
   server.registerTool("move_mouse", {
