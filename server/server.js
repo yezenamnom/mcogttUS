@@ -654,7 +654,9 @@ function makeMcpServer() {
     const metadata={screen,changed,difference:Number(difference.toFixed(4)),threshold,width:shot.width,height:shot.height,mimeType:shot.mimeType,at:Date.now(),fallback:!!shot.fallback};
     const content=[{type:"text",text:JSON.stringify(metadata)}];
     if(changed||!onlyIfChanged)content.unshift({type:"image",data:shot.buffer.toString("base64"),mimeType:shot.mimeType});
-    return {content,structuredContent:metadata};
+    // Keep vision observations in MCP content, not a competing JSON-only
+    // structured result. Metadata remains available as the text content block.
+    return {content};
   });
   server.registerTool("desktop_mouse_action",{
     description:"One real Windows mouse operation. Coordinates are physical screen pixels including negative monitor origins. For a final click set screenshotAfter=true, inspect that returned image, and only then claim success. Never infer success merely because the click was sent. After verified success answer only 'تم' unless the user requested explanation or a report.",
