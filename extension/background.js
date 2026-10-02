@@ -1,13 +1,14 @@
 let ws = null;
 let reconnectTimer = null;
 let pingTimer = null;
-const EXT_VERSION = "0.10.1";
+const EXT_VERSION = "0.11.0";
 const domState = new Map();
 const cdpAttached = new Set();
 const networkState = new Map();
 let commandQueue = Promise.resolve();
 let reconnectAttempt = 0;
 let captureActive = false;
+let captureLastError = null;
 
 async function ensureOffscreenDocument() {
   const url = chrome.runtime.getURL("offscreen.html");
@@ -15,13 +16,36 @@ async function ensureOffscreenDocument() {
   if (contexts.length) return;
   await chrome.offscreen.createDocument({ url: "offscreen.html", reasons: ["USER_MEDIA"], justification: "Stream a user-selected tab, window, or screen to the private GPT US viewer." });
 }
+
 async function toggleBrowserCapture(tab) {
-  if (captureActive) { await ensureOffscreenDocument(); await chrome.runtime.sendMessage({type:"capture_stop"}); captureActive=false; chrome.action.setBadgeText({text:ws?.readyState===WebSocket.OPEN?"ON":"OFF"}); return; }
-  const streamId=await new Promise((resolve,reject)=>chrome.desktopCapture.chooseDesktopMedia(["screen","window","tab","audio"],tab,id=>id?resolve(id):reject(new Error("Capture selection cancelled"))));
-  await ensureOffscreenDocument(); const result=await chrome.runtime.sendMessage({type:"capture_start",streamId}); if(!result?.ok)throw new Error(result?.error||"Capture failed to start");
-  captureActive=true;chrome.action.setBadgeText({text:"LIVE"});chrome.action.setBadgeBackgroundColor({color:"#7c3aed"});
+  if (captureActive) {
+    await ensureOffscreenDocument();
+    await chrome.runtime.sendMessage({ type: "capture_stop" });
+    captureActive = false;
+    chrome.action.setBadgeText({ text: ws?.readyState === WebSocket.OPEN ? "ON" : "OFF" });
+    return;
+  }
+  const extensionTabs = await chrome.tabs.query({ url: chrome.runtime.getURL("*") });
+  const captureHostTab = extensionTabs.find(item => item.url?.startsWith(chrome.runtime.getURL("")));
+  if (!captureHostTab) throw new Error("Open the Comet ChatGPT Bridge options page once, then retry capture");
+  const streamId = await new Promise((resolve, reject) => {
+    chrome.desktopCapture.chooseDesktopMedia(["screen", "window", "tab", "audio"], captureHostTab, id => id ? resolve(id) : reject(new Error("Capture selection cancelled")));
+  });
+  await ensureOffscreenDocument();
+  const result = await chrome.runtime.sendMessage({ type: "capture_start", streamId });
+  if (!result?.ok) throw new Error(result?.error || "Capture failed to start");
+  captureLastError = null;
+  captureActive = true;
+  chrome.action.setBadgeText({ text: "LIVE" });
+  chrome.action.setBadgeBackgroundColor({ color: "#7c3aed" });
 }
-chrome.runtime.onMessage.addListener(message=>{if(message?.type!=="capture_state")return;captureActive=!!message.active;chrome.action.setBadgeText({text:captureActive?"LIVE":(ws?.readyState===WebSocket.OPEN?"ON":"OFF")});chrome.action.setBadgeBackgroundColor({color:captureActive?"#7c3aed":(ws?.readyState===WebSocket.OPEN?"#2e7d32":"#9e9e9e")});});
+
+chrome.runtime.onMessage.addListener(message => {
+  if (message?.type !== "capture_state") return;
+  captureActive = !!message.active;
+  chrome.action.setBadgeText({ text: captureActive ? "LIVE" : (ws?.readyState === WebSocket.OPEN ? "ON" : "OFF") });
+  chrome.action.setBadgeBackgroundColor({ color: captureActive ? "#7c3aed" : (ws?.readyState === WebSocket.OPEN ? "#2e7d32" : "#9e9e9e") });
+});
 
 function getNetworkState(tabId){
   if(!networkState.has(tabId)) networkState.set(tabId,{order:[],byId:new Map()});
@@ -93,62 +117,70 @@ async function activeTab() {
   if (!tab?.id) throw new Error("No active tab found");
   return tab;
 }
-const isChatHost = tab => /(^|\.)chatgpt\.com$/i.test((()=>{try{return new URL(tab?.url||"").hostname}catch{return ""}})());
-async function storedWorkingTab() {
-  const target=(await chrome.storage.local.get("workingTarget")).workingTarget;
-  if(!Number.isInteger(target?.tabId)) return null;
-  try {
-    const tab=await chrome.tabs.get(target.tabId);
-    if(!tab?.id) throw new Error();
-    return tab;
-  } catch {
-    await chrome.storage.local.remove("workingTarget");
-    throw new Error("The pinned working tab was closed. Select the left/right site again; GPT US will not fall back to ChatGPT.");
-  }
+async function pinnedTab(){
+ const {workingTarget}=await chrome.storage.local.get("workingTarget");
+ if(!workingTarget)return null;
+ const {targetSession}=await chrome.storage.session.get("targetSession");
+ if(workingTarget.session!==targetSession)throw new Error("Browser session changed; select target again");
+ const tab=await chrome.tabs.get(workingTarget.tabId).catch(()=>null);
+ if(!tab||tab.windowId!==workingTarget.windowId)throw new Error("Pinned tab closed; select a new target");
+ return tab;
 }
-async function saveWorkingTab(tab,reason="explicit") {
-  const target={tabId:tab.id,windowId:tab.windowId,index:tab.index,title:tab.title||"",url:tab.url||"",reason,selectedAt:new Date().toISOString()};
-  await chrome.storage.local.set({workingTarget:target});
-  return target;
-}
-async function chooseWorkingTab(args={}) {
-  const tabs=await chrome.tabs.query({currentWindow:true});
-  let candidates=tabs.filter(t=>t?.id);
-  let tab=null;
-  if(Number.isInteger(Number(args.tabId))) tab=candidates.find(t=>t.id===Number(args.tabId));
-  const urlContains=String(args.urlContains||"").trim().toLowerCase();
-  const titleContains=String(args.titleContains||"").trim().toLowerCase();
-  if(!tab&&urlContains) tab=candidates.find(t=>(t.url||"").toLowerCase().includes(urlContains));
-  if(!tab&&titleContains) tab=candidates.find(t=>(t.title||"").toLowerCase().includes(titleContains));
-  if(!tab&&args.side){
-    const active=candidates.find(t=>t.active);
-    const splitId=active?.splitViewId;
-    const split=Number.isInteger(splitId)&&splitId>=0?candidates.filter(t=>t.splitViewId===splitId):[];
-    const visible=(split.length>=2?split:candidates.filter(t=>!isChatHost(t))).sort((a,b)=>a.index-b.index);
-    tab=args.side==="right"?visible.at(-1):visible[0];
-  }
-  if(!tab) throw new Error("Could not uniquely identify the requested working tab. Use tabId, titleContains, urlContains, or side.");
-  return {selected:true,target:await saveWorkingTab(tab,args.side||"match"),tab:{id:tab.id,title:tab.title,url:tab.url,index:tab.index,active:tab.active,splitViewId:tab.splitViewId??null}};
+async function chooseWorkingTab(args){
+ const tabs=await chrome.tabs.query({currentWindow:true});
+ let candidates=tabs.filter(t=>args.tabId!==undefined?t.id===Number(args.tabId):args.titleContains?(t.title||"").includes(args.titleContains):args.urlContains?(t.url||"").includes(args.urlContains):true);
+ if(args.side){const active=tabs.find(t=>t.active);const visible=tabs.filter(t=>t.splitViewId===active?.splitViewId&&Number.isInteger(t.splitViewId)&&t.splitViewId>=0).sort((a,b)=>a.index-b.index);if(visible.length!==2)throw new Error("Split side is ambiguous; choose tabId");candidates=[args.side==="left"?visible[0]:visible[1]];}
+ if(candidates.length!==1)throw new Error("Target must identify exactly one tab");
+ const tab=candidates[0];let {targetSession}=await chrome.storage.session.get("targetSession");
+ if(!targetSession){targetSession=crypto.randomUUID();await chrome.storage.session.set({targetSession});}
+ await chrome.storage.local.set({workingTarget:{tabId:tab.id,windowId:tab.windowId,session:targetSession,url:tab.url}});
+ return {selected:true,tab:{id:tab.id,windowId:tab.windowId,title:tab.title,url:tab.url},session:targetSession};
 }
 async function targetTab(args={}) {
-  if (args.tabId !== undefined && args.tabId !== null) {
-    const id=Number(args.tabId);
-    if(!Number.isInteger(id)) throw new Error("tabId must be an integer");
-    const tab=await chrome.tabs.get(id);
-    if(!tab?.id) throw new Error("Tab not found");
-    return tab;
+ const pinned=await pinnedTab();
+ if(args.tabId!==undefined){if(pinned&&pinned.id!==Number(args.tabId))throw new Error("Explicit tab differs from pinned target; select it first");return await chrome.tabs.get(Number(args.tabId));}
+ if(pinned)return pinned;
+ return activeTab();
+}
+function layeredDOM(args){
+ const matches=args.selector?[...document.querySelectorAll(args.selector)]:args.name?[...document.querySelectorAll("button,a,input,textarea,[role=button]")].filter(e=>(e.getAttribute("aria-label")||e.innerText||"").trim()===args.name):[];
+ const element=matches.length===1?matches[0]:null;
+ const rect=element?.getBoundingClientRect();
+ const secret=element?.type==="password";
+ const state={url:location.href,title:document.title,text:(document.body?.innerText||"").slice(0,20000),element:element?{exists:true,name:element.getAttribute("aria-label")||element.innerText||"",value:secret?"[REDACTED]":element.value,disabled:!!element.disabled,bounds:{x:rect.x,y:rect.y,width:rect.width,height:rect.height}}:null,scrollY};
+ if(args.observe)return state;
+ if(!element||element.disabled||!rect.width||!rect.height)return {notExecuted:true,retrySafe:true,reason:"Element missing, ambiguous, disabled or hidden"};
+ if(secret)return {notExecuted:true,retrySafe:false,reason:"Protected field cannot be verified"};
+ if(args.action==="click"){element.click();return {executed:true};}
+ if(args.action==="type"){
+  const prototype=element.tagName==="TEXTAREA"?HTMLTextAreaElement.prototype:HTMLInputElement.prototype;
+  const setter=Object.getOwnPropertyDescriptor(prototype,"value")?.set;
+  if(!setter||element.readOnly)return {notExecuted:true,retrySafe:true,reason:"Element does not support value"};
+  setter.call(element,String(args.text||""));element.dispatchEvent(new Event("input",{bubbles:true}));element.dispatchEvent(new Event("change",{bubbles:true}));return {executed:true};
+ }
+ return {notExecuted:true,retrySafe:true,reason:"Unsupported DOM operation"};
+}
+async function browserLayerAct(tabId,args){
+ if(args.layer==="dom")return await runInTab(tabId,layeredDOM,[args]);
+ if(!["cdp","accessibility"].includes(args.layer))return {notExecuted:true,retrySafe:true,reason:"Unsupported browser layer"};
+ let box;
+ try{
+  if(args.layer==="accessibility"){
+   const {nodes}=await cdp(tabId,"Accessibility.getFullAXTree");
+   const matches=nodes.filter(n=>!n.ignored&&n.name?.value===args.name&&n.backendDOMNodeId);
+   if(matches.length!==1)return {notExecuted:true,retrySafe:true,reason:"AX target missing or ambiguous"};
+   const result=await cdp(tabId,"DOM.getBoxModel",{backendNodeId:matches[0].backendDOMNodeId});box=result.model.content;
+  }else{
+   const state=await runInTab(tabId,layeredDOM,[{...args,observe:true}]);
+   if(!state.element)return {notExecuted:true,retrySafe:true,reason:"CDP target unavailable"};
+   const b=state.element.bounds;box=[b.x,b.y,b.x+b.width,b.y,b.x+b.width,b.y+b.height,b.x,b.y+b.height];
   }
-  const pinned=await storedWorkingTab();
-  if(pinned) return pinned;
-  const active=await activeTab();
-  if(isChatHost(active)) {
-    const alternatives=(await chrome.tabs.query({currentWindow:true})).filter(t=>t?.id&&!isChatHost(t));
-    if(alternatives.length===1) {
-      await saveWorkingTab(alternatives[0],"automatic-only-non-chatgpt-tab");
-      return alternatives[0];
-    }
-  }
-  return active;
+ }catch(error){return {notExecuted:true,retrySafe:true,reason:error.message};}
+ if(args.action!=="click")return {notExecuted:true,retrySafe:true,reason:"This CDP/AX adapter supports click only"};
+ const x=(box[0]+box[4])/2,y=(box[1]+box[5])/2;
+ await cdp(tabId,"Input.dispatchMouseEvent",{type:"mousePressed",x,y,button:"left",clickCount:1});
+ try{await cdp(tabId,"Input.dispatchMouseEvent",{type:"mouseReleased",x,y,button:"left",clickCount:1});}catch(error){throw new Error("Click outcome unknown: "+error.message);}
+ return {executed:true};
 }
 function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
 async function ensureCdp(tabId){
@@ -683,6 +715,12 @@ function selectTarget(selector,value) { const el=document.querySelector(selector
 async function executeCommand(command,args={}){
   const tab=async()=>await targetTab(args);
   switch(command){
+    case "select_working_tab":return await chooseWorkingTab(args);
+    case "get_working_tab":{const t=await pinnedTab();return t?{selected:true,tab:{id:t.id,windowId:t.windowId,url:t.url,title:t.title}}:{selected:false};}
+    case "clear_working_tab":await chrome.storage.local.remove("workingTarget");return {cleared:true};
+    case "layer_observe":{const t=await tab();return {tabId:t.id,...await runInTab(t.id,layeredDOM,[{...args,observe:true}])};}
+    case "layer_act":{const t=await tab();return await browserLayerAct(t.id,args);}
+    case "accessibility_tree":{const t=await tab();const {nodes}=await cdp(t.id,"Accessibility.getFullAXTree");return {tabId:t.id,nodes:nodes.slice(0,1000).map(n=>({nodeId:n.nodeId,role:n.role?.value,name:n.name?.value,ignored:n.ignored,childIds:n.childIds,backendDOMNodeId:n.backendDOMNodeId}))};}
     case "workspace_report": {
       const t=await tab();
       const report={schemaVersion:1,observedAt:new Date().toISOString(),coordinateSpace:"css-viewport",tabId:t.id,
@@ -707,19 +745,16 @@ async function executeCommand(command,args={}){
       await chrome.storage.local.set({smartActions:stored});
       return {selected:true,number,label:option.label,prompt:option.prompt};
     }
-    case "bridge_info": { const t=await activeTab().catch(()=>null); const working=await storedWorkingTab().catch(()=>null); return {extensionVersion:EXT_VERSION,connected:ws?.readyState===WebSocket.OPEN,captureActive,activeTabId:t?.id||null,workingTabId:working?.id||null,workingTitle:working?.title||null,workingUrl:working?.url||null,cdpAttached:[...cdpAttached],capabilities:["pinned_working_tab","split_view_targeting","tabId","live_dom","dom_diff","deep_dom","shadow_dom","same_origin_iframes","element_map","viewport","wait_for","mouse_advanced","smooth_cursor","freehand_draw","native_mouse_path","keyboard_combo","drag_drop","zoom","parallel_actions","cdp","screenshots","browser_live_capture","system_audio","forms","click_fallback"]}; }
-    case "select_working_tab": return await chooseWorkingTab(args);
-    case "get_working_tab": { const t=await storedWorkingTab(); return t?{selected:true,tab:{id:t.id,title:t.title,url:t.url,index:t.index,active:t.active,splitViewId:t.splitViewId??null}}:{selected:false}; }
-    case "clear_working_tab": await chrome.storage.local.remove("workingTarget"); return {cleared:true};
-    case "browser_capture_status": return {active:captureActive,requiresUserGesture:!captureActive,startHint:"Click the Comet ChatGPT Bridge toolbar icon and choose a tab, window, or screen."};
-    case "browser_capture_stop": await ensureOffscreenDocument();await chrome.runtime.sendMessage({type:"capture_stop"});captureActive=false;return {stopped:true};
+    case "bridge_info": { const t=await activeTab().catch(()=>null);const working=await pinnedTab().catch(()=>null); return {workingTabId:working?.id||null,extensionVersion:EXT_VERSION,connected:ws?.readyState===WebSocket.OPEN,captureActive,activeTabId:t?.id||null,cdpAttached:[...cdpAttached],capabilities:["tabId","live_dom","dom_diff","deep_dom","shadow_dom","same_origin_iframes","element_map","viewport","wait_for","mouse_advanced","smooth_cursor","freehand_draw","native_mouse_path","keyboard_combo","drag_drop","zoom","parallel_actions","cdp","screenshots","browser_live_capture","system_audio","forms","click_fallback"]}; }
+    case "browser_capture_status": return { active:captureActive, lastError:captureLastError, requiresUserGesture:!captureActive, startHint:"Click the Comet ChatGPT Bridge toolbar icon and choose a tab, window, or screen." };
+    case "browser_capture_stop": await ensureOffscreenDocument(); await chrome.runtime.sendMessage({type:"capture_stop"}); captureActive=false; return {stopped:true};
     case "get_page": { const t=await tab(); const result=await runInTab(t.id,pageSnapshot,[Math.min(Math.max(Number(args.maxChars||30000),1000),100000)]); return {tabId:t.id,...result}; }
     case "get_viewport": { const t=await tab(); return {tabId:t.id,...await runInTab(t.id,viewportInfo,[])}; }
     case "element_map": { const t=await tab(); return {tabId:t.id,elements:await runInTab(t.id,elementMap,[])}; }
     case "dom_watch": { const t=await tab(); const snap=await runInTab(t.id,domDigest,[Math.min(Math.max(Number(args.maxChars||40000),1000),100000)]); const prev=domState.get(t.id); domState.set(t.id,snap); return {tabId:t.id,changed:!prev||prev.url!==snap.url||prev.text!==snap.text,previousAt:prev?.at||null,current:snap}; }
     case "dom_diff": { const t=await tab(); const snap=await runInTab(t.id,domDigest,[Math.min(Math.max(Number(args.maxChars||40000),1000),100000)]); const prev=domState.get(t.id); domState.set(t.id,snap); if(!prev) return {tabId:t.id,baselineCreated:true,current:snap}; const oldSet=new Set(prev.interactive.map(x=>x.elementId+"|"+x.text)); const newSet=new Set(snap.interactive.map(x=>x.elementId+"|"+x.text)); return {tabId:t.id,urlChanged:prev.url!==snap.url,textChanged:prev.text!==snap.text,added:[...newSet].filter(x=>!oldSet.has(x)).slice(0,200),removed:[...oldSet].filter(x=>!newSet.has(x)).slice(0,200),at:snap.at}; }
     case "wait_for": { const t=await tab(); const timeout=Math.min(Math.max(Number(args.timeoutMs||10000),100),60000), interval=Math.min(Math.max(Number(args.intervalMs||250),50),2000), began=Date.now(); while(Date.now()-began<timeout){ if(await runInTab(t.id,findCondition,[args.selector||null,args.text||null])) return {found:true,tabId:t.id,elapsedMs:Date.now()-began}; await sleep(interval); } throw new Error("wait_for timed out"); }
-    case "click": { const t=await tab(); const before={url:t.url,title:t.title}; const action=await runInTab(t.id,clickTarget,[args.selector||null,args.text||null,await getCursorVisualConfig()]); await sleep(120); const after=await chrome.tabs.get(t.id); return {tabId:t.id,targetPinned:true,before,action,after:{url:after.url,title:after.title,status:after.status}}; }
+    case "click": { const t=await tab(); return await runInTab(t.id,clickTarget,[args.selector||null,args.text||null,await getCursorVisualConfig()]); }
     case "type": { const t=await tab(); return await runInTab(t.id,typeTarget,[args.selector,String(args.text??""),args.clearFirst!==false]); }
     case "navigate": { const t=await tab(); await chrome.tabs.update(t.id,{url:args.url}); return {navigated:true,tabId:t.id,url:args.url}; }
     case "move_mouse": { const t=await tab(); return await nativeMouseAction(t.id,{...args,kind:"mousemove"}); }
@@ -737,7 +772,7 @@ async function executeCommand(command,args={}){
     case "batch_actions": { const results=[]; for(const a of (args.actions||[])){ if(["batch_actions","parallel_actions"].includes(a.command)) throw new Error("Nested batch/parallel is not allowed"); results.push(await executeCommand(a.command,a.args||{})); } return {completed:true,count:results.length,results}; }
     case "parallel_actions": { const acts=args.actions||[]; const results=await Promise.all(acts.map(a=>{if(["batch_actions","parallel_actions"].includes(a.command)) throw new Error("Nested batch/parallel is not allowed"); return executeCommand(a.command,a.args||{});})); return {completed:true,count:results.length,results}; }
     case "screenshot": { const t=await tab(); if(!t.active) throw new Error("Screenshot capture requires the target tab to be active in its window"); const dataUrl=await chrome.tabs.captureVisibleTab(t.windowId,{format:"png"}); const metrics=await runInTab(t.id,viewportInfo,[]); return {tabId:t.id,dataUrl,...metrics}; }
-    case "list_tabs": { const tabs=await chrome.tabs.query({currentWindow:true}); const working=await storedWorkingTab().catch(()=>null); return tabs.map(t=>({id:t.id,index:t.index,active:t.active,working:t.id===working?.id,title:t.title,url:t.url,status:t.status,splitViewId:t.splitViewId??null})); }
+    case "list_tabs": { const tabs=await chrome.tabs.query({currentWindow:true}); return tabs.map(t=>({id:t.id,active:t.active,title:t.title,url:t.url,status:t.status})); }
     case "activate_tab": { const tabId=Number(args.tabId); if(!Number.isInteger(tabId)) throw new Error("tabId must be an integer"); await chrome.tabs.update(tabId,{active:true}); return {activated:true,tabId}; }
     case "new_tab": { const t=await chrome.tabs.create({url:args.url||"about:blank",active:args.active!==false}); return {created:true,tabId:t.id,url:t.url}; }
     case "close_tab": { const t=await tab(); await chrome.tabs.remove(t.id); domState.delete(t.id); return {closed:true,tabId:t.id}; }
@@ -775,6 +810,9 @@ chrome.storage.onChanged.addListener((changes, areaName)=>{
   ws = null;
   setTimeout(connect, 300);
 });
-chrome.action.onClicked.addListener(tab=>toggleBrowserCapture(tab).catch(error=>{chrome.action.setBadgeText({text:"ERR"});chrome.action.setBadgeBackgroundColor({color:"#c62828"});console.error("GPT US capture:",error);}));
+chrome.action.onClicked.addListener(tab=>toggleBrowserCapture(tab).catch(error=>{
+  captureLastError = String(error?.message || error);
+  chrome.action.setBadgeText({text:"ERR"}); chrome.action.setBadgeBackgroundColor({color:"#c62828"});
+  console.error("GPT US capture:",error);
+}));
 connect();
-

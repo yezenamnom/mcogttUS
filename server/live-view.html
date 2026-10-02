@@ -52,6 +52,10 @@
       let audioContext = null;
       let audioEnabled = false;
       let nextAudioTime = 0;
+      let mediaUrl = null;
+      let streamKind = null;
+      let waitingForInit = true;
+      let resumeAfterVisibility = false;
       let mediaSource = null;
       let sourceBuffer = null;
       const videoQueue = [];
@@ -85,36 +89,71 @@
       }
       function appendVideo(bytes, info) {
         if (!mediaSource) {
-          mediaSource = new MediaSource(); video.src = URL.createObjectURL(mediaSource);
+          mediaSource = new MediaSource(); mediaUrl = URL.createObjectURL(mediaSource); video.src = mediaUrl;
+          const openingSource=mediaSource;
           mediaSource.addEventListener('sourceopen', () => {
+            if(openingSource!==mediaSource)return;
+            try {
             const codec = `video/mp4; codecs="${info.codec || 'avc1.640028'}"`;
-            if (!MediaSource.isTypeSupported(codec)) { status.textContent = 'H.264 غير مدعوم في هذه الواجهة'; return; }
+            if (!MediaSource.isTypeSupported(codec)) { mediaFailed(); return; }
             sourceBuffer = mediaSource.addSourceBuffer(codec); sourceBuffer.mode = 'sequence';
-            sourceBuffer.addEventListener('updateend', flushVideo);
+            sourceBuffer.addEventListener('error', mediaFailed); sourceBuffer.addEventListener('updateend', flushVideo);
             flushVideo();
+            } catch { mediaFailed(); }
           }, { once: true });
         }
         videoQueue.push(new Uint8Array(bytes)); flushVideo();
-        screen.classList.remove('jpeg'); screen.classList.add('ready','h264');
+        streamKind='h264'; screen.classList.remove('jpeg','webm'); screen.classList.add('h264');
       }
       function appendWebm(bytes, info) {
         if (!mediaSource) {
-          mediaSource = new MediaSource(); video.src = URL.createObjectURL(mediaSource);
+          mediaSource = new MediaSource(); mediaUrl = URL.createObjectURL(mediaSource); video.src = mediaUrl;
+          const openingSource=mediaSource;
           mediaSource.addEventListener('sourceopen', () => {
+            if(openingSource!==mediaSource)return;
+            try {
             const codec = info.mimeType || 'video/webm;codecs=vp8,opus';
-            if (!MediaSource.isTypeSupported(codec)) { status.textContent = 'ترميز WebM غير مدعوم في هذه الواجهة'; return; }
+            if (!MediaSource.isTypeSupported(codec)) { mediaFailed(); return; }
             sourceBuffer = mediaSource.addSourceBuffer(codec); sourceBuffer.mode = 'sequence';
-            sourceBuffer.addEventListener('updateend', flushVideo); flushVideo();
+            sourceBuffer.addEventListener('error', mediaFailed); sourceBuffer.addEventListener('updateend', flushVideo); flushVideo();
+            } catch { mediaFailed(); }
           }, { once: true });
         }
         videoQueue.push(new Uint8Array(bytes)); flushVideo();
         video.muted = !audioEnabled; video.play().catch(()=>{});
-        screen.classList.remove('jpeg','h264'); screen.classList.add('ready','webm');
+        streamKind='webm'; screen.classList.remove('jpeg','h264'); screen.classList.add('webm');
       }
-      function flushVideo() { if (!sourceBuffer || sourceBuffer.updating || !videoQueue.length) return; try { sourceBuffer.appendBuffer(videoQueue.shift()); } catch { videoQueue.splice(0); } }
+      function mediaFailed() {
+        resetVideo();
+        status.textContent='تعذر تشغيل الفيديو — جارٍ الاستعادة';
+        message.textContent='بانتظار بداية فيديو قابلة للتشغيل…';
+        if (source==='browser' && latest?.monitors?.length) {
+          source=String(latest.monitors[0].index);select.value=source;
+          if(stream?.readyState===WebSocket.OPEN)stream.send(JSON.stringify({type:'select',screen:Number(source),mode:'jpeg'}));
+        }
+      }
+      function flushVideo() {
+        if (!sourceBuffer || sourceBuffer.updating) return;
+        try {
+          if (sourceBuffer.buffered.length) {
+            const end=sourceBuffer.buffered.end(sourceBuffer.buffered.length-1);
+            if(end-video.currentTime>2)video.currentTime=Math.max(0,end-0.4);
+            if(video.currentTime>20 && sourceBuffer.buffered.start(0)<video.currentTime-15) {
+              sourceBuffer.remove(0,video.currentTime-10);return;
+            }
+          }
+          if(videoQueue.length)sourceBuffer.appendBuffer(videoQueue.shift());
+        } catch { mediaFailed(); }
+      }
+      video.addEventListener('loadeddata',()=>{
+        screen.classList.add('ready');
+        video.play().catch(()=>{status.textContent='اضغط متابعة لتشغيل الفيديو';});
+      });
+      video.addEventListener('error',mediaFailed);
       function resetVideo() {
         videoQueue.splice(0); pendingFrameInfo = null; pendingPacketInfo = null;
-        sourceBuffer = null; mediaSource = null;
+        sourceBuffer = null; mediaSource = null; waitingForInit=true; streamKind=null;
+        if(mediaUrl){URL.revokeObjectURL(mediaUrl);mediaUrl=null;}
         try { video.pause(); video.removeAttribute('src'); video.load(); } catch {}
         frame.removeAttribute('src'); screen.classList.remove('ready','h264','jpeg','webm');
       }
@@ -176,7 +215,7 @@
         if (!options.length) { status.textContent = 'لا توجد شاشة أو قناة متصفح متصلة'; schedule(3000); return; }
         select.replaceChildren(...options);
         const secondary = monitors.find(m => !m.primary);
-        source = previous==='browser'&&options.some(o=>o.value==='browser') ? 'browser' : monitors.some(m => String(m.index) === String(previous)) ? String(previous) : secondary ? String(secondary.index) : monitors[0] ? String(monitors[0].index) : 'browser';
+        source = options.some(o=>o.value===String(previous)) ? String(previous) : result.browserCapture?.active&&options.some(o=>o.value==='browser') ? 'browser' : secondary ? String(secondary.index) : monitors[0] ? String(monitors[0].index) : 'browser';
         select.value = source;
         const selectedMonitor = monitors.find(m => String(m.index) === source);
         if (selectedMonitor?.width && selectedMonitor?.height) { screen.style.setProperty('--monitor-ratio', `${selectedMonitor.width} / ${selectedMonitor.height}`);screen.style.setProperty('--monitor-aspect', String(selectedMonitor.width/selectedMonitor.height)); }
@@ -197,15 +236,21 @@
         stream.onopen = () => {
           if (!active || document.hidden) { stopLeavingView(); return; }
           stream.send(JSON.stringify(source==='browser' ? { type:'select',source:'browser' } : { type: 'select', screen: Number(source), mode: 'jpeg' }));
+          let lastPlayback=video.currentTime; let stalledTicks=0;
           heartbeatTimer = setInterval(() => {
             if (active && !document.hidden && stream?.readyState === WebSocket.OPEN)
               stream.send(JSON.stringify({type:'heartbeat'}));
+            if(source==='browser'){
+              stalledTicks=video.currentTime===lastPlayback?stalledTicks+1:0;lastPlayback=video.currentTime;
+              if(stalledTicks>=3){stalledTicks=0;mediaFailed();}
+            }
           }, 5000);
         };
         stream.onmessage = event => {
           if (typeof event.data === 'string') {
             try {
               const data = JSON.parse(event.data);
+              if(data.type==='ticket' && latest){Object.assign(latest,data);return;}
               if (data.type === 'frame') { pendingFrameInfo = data; pendingPacketInfo = data; }
               else if (data.type === 'audio' || data.type === 'h264' || data.type === 'webm') pendingPacketInfo = data;
               else if (data.type === 'capture_state' && source==='browser' && !data.active) { status.textContent='اضغط أيقونة GPT US في Comet واختر مصدر البث'; message.textContent='لبدء بث Chrome/Comet اضغط أيقونة الإضافة مرة واحدة ثم اختر التبويب أو النافذة أو الشاشة.';screen.classList.remove('ready'); }
@@ -216,8 +261,15 @@
           if (!pendingPacketInfo) return;
           const packetInfo = pendingPacketInfo; pendingPacketInfo = null;
           if (packetInfo.type === 'audio') { playAudio(event.data, packetInfo); return; }
-          if (packetInfo.type === 'h264') { appendVideo(event.data, packetInfo); status.textContent = 'H.264 مباشر · هدف 60 FPS · صوت متاح'; return; }
-          if (packetInfo.type === 'webm') { appendWebm(event.data, packetInfo); audioButton.hidden=false;status.textContent=`Chrome/Comet مباشر · ${packetInfo.width||'؟'}×${packetInfo.height||'؟'} · ${packetInfo.fps?Number(packetInfo.fps).toFixed(1):'حتى 60'} FPS · ${packetInfo.audio?'صوت متاح':'بدون صوت'}`;return; }
+          if (packetInfo.type === 'h264') { appendVideo(event.data, packetInfo); status.textContent = video.readyState>=2 ? 'H.264 مباشر · صوت متاح' : 'جارٍ فك ترميز أول إطار…'; return; }
+          if (packetInfo.type === 'webm') {
+            const header=new Uint8Array(event.data,0,Math.min(4,event.data.byteLength));
+            const init=packetInfo.segmentStart || (header[0]===0x1a&&header[1]===0x45&&header[2]===0xdf&&header[3]===0xa3);
+            if(waitingForInit&&!init){status.textContent='بانتظار بداية الفيديو…';return;}
+            waitingForInit=false;
+            if(typeof MediaSource==='undefined'){mediaFailed();return;}
+            if(videoQueue.length>40){mediaFailed();return;}
+            appendWebm(event.data, packetInfo); audioButton.hidden=false;status.textContent=video.readyState>=2 ? "Chrome/Comet مباشر" : "جارٍ فك ترميز أول إطار…";return; }
           if (!pendingFrameInfo || String(pendingFrameInfo.screen) !== source) return;
           const reader = new FileReader();
           reader.onload = () => { frame.src = reader.result; };
@@ -236,12 +288,18 @@
           clearInterval(heartbeatTimer); heartbeatTimer = null;
           stream = null;
           if(event.code===4002 || event.code===4004){active=false;clearTimeout(timer);resetVideo();screen.classList.remove('ready');toggle.textContent='متابعة';status.textContent='البث متوقف';message.textContent=event.code===4002?'آخر طلب عرض شاشة هو الجلسة النشطة.':'توقف البث لانقطاع اتصال العرض. اضغط متابعة للاستئناف.';return;}
-          if (active) { latest = null; schedule(1000); }
+          if (active) { resetVideo(); schedule(1000); }
         };
       }
       async function refreshConnection() {
         try {
-          const result = await rpc('tools/call', { name: 'live_view_state', arguments: {} });
+          let result;
+          if(window.parent===window && latest?.streamUrl){
+            const url=new URL(latest.streamUrl);
+            const response=await fetch('/viewer-state?ticket='+encodeURIComponent(url.searchParams.get('ticket')), {cache:'no-store'});
+            if(!response.ok){if(response.status===401){active=false;toggle.textContent='متابعة';}throw new Error(response.status===401?'انتهت صلاحية الرابط؛ افتح العرض مجددًا من المحادثة':'تعذر الاتصال بالسيرفر');}
+            result=await response.json();
+          }else result=await rpc('tools/call', { name: 'live_view_state', arguments: {} });
           configure(result);
           if (!latest?.connected) schedule(3000);
         } catch (error) {
@@ -264,7 +322,7 @@
         lastFrameAt = 0; measuredFps = 0;
         status.textContent = active ? 'جارٍ الاستئناف…' : 'متوقف مؤقتًا';
         if (active) {
-          resetVideo(); closeStream(); window.location.reload(); return;
+          resetVideo(); closeStream(); refreshConnection(); return;
         } else {
           clearTimeout(timer);
           if (stream?.readyState === WebSocket.OPEN) stream.send(JSON.stringify({ type: 'pause' }));
@@ -311,7 +369,12 @@
         message.textContent='توقف إرسال الشاشة عند مغادرة العرض. اضغط متابعة للاستئناف.';
       }
       window.addEventListener('pagehide', stopLeavingView);
-      document.addEventListener('visibilitychange', () => { if (document.hidden) stopLeavingView(); });
+      document.addEventListener('visibilitychange', () => {
+        if(document.hidden){resumeAfterVisibility=active;stopLeavingView();}
+        else if(resumeAfterVisibility){
+          resumeAfterVisibility=false;active=true;toggle.textContent='إيقاف مؤقت';refreshConnection();
+        }
+      });
       configure(window.openai?.toolOutput || window.openai?.toolResponseMetadata || embeddedState);
       // Use the fresh opening-tool state first. If a cached ticket is stale,
       // the WebSocket close handler requests replacement state automatically.
@@ -320,4 +383,3 @@
   </script>
 </body>
 </html>
-

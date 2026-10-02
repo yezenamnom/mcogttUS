@@ -5,6 +5,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <UseWindowsForms>true</UseWindowsForms>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <UseWPF>true</UseWPF>
     <AssemblyName>ChatGPTDesktopBridge</AssemblyName>
   </PropertyGroup>
   <ItemGroup>

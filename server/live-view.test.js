@@ -55,8 +55,8 @@ test("private live-view resource, auth, monitor selection and frame delivery", a
     const initialized = await rpc(1, "initialize", { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "live-view-test", version: "1" } });
     assert.match(initialized.result.instructions, /نفّذ أولًا، ثم تحقق/);
     const tools = (await rpc(2, "tools/list", {})).result.tools;
-    assert.equal(tools.find(t => t.name === "open_live_view")._meta.ui.resourceUri, "ui://gpt-us/live-view-v28.html");
-    assert.equal(tools.find(t => t.name === "open_live_view")._meta["openai/outputTemplate"], "ui://gpt-us/live-view-v28.html");
+    assert.equal(tools.find(t => t.name === "open_live_view")._meta.ui.resourceUri, "ui://gpt-us/live-view-v29.html");
+    assert.equal(tools.find(t => t.name === "open_live_view")._meta["openai/outputTemplate"], "ui://gpt-us/live-view-v29.html");
     assert.equal(tools.find(t => t.name === "open_live_view")._meta["openai/widgetAccessible"], true);
     assert.deepEqual(tools.find(t => t.name === "live_view_frame")._meta.ui.visibility, ["app"]);
     assert.deepEqual(tools.find(t => t.name === "live_view_state")._meta.ui.visibility, ["app"]);
@@ -71,7 +71,7 @@ test("private live-view resource, auth, monitor selection and frame delivery", a
     assert.match(smartResource.result.contents[0].text, /الخطوة التالية/);
     const smartOpened = await rpc(31, "tools/call", { name: "open_smart_panel", arguments: { task: "غيّر الصوت" } });
     assert.equal(smartOpened.result.structuredContent.phase, "idle");
-    const resource = await rpc(3, "resources/read", { uri: "ui://gpt-us/live-view-v28.html" });
+    const resource = await rpc(3, "resources/read", { uri: "ui://gpt-us/live-view-v29.html" });
     assert.match(resource.result.contents[0].text, /الكمبيوتر المباشر/);
     assert.match(resource.result.contents[0].text, /const embeddedState = null/);
     assert.equal(resource.result.contents[0].mimeType, "text/html;profile=mcp-app");
@@ -89,6 +89,10 @@ test("private live-view resource, auth, monitor selection and frame delivery", a
     assert.equal(viewerResponse.status, 200);
     assert.match(viewerResponse.headers.get("cache-control"), /no-store/);
     assert.match(await viewerResponse.text(), /الكمبيوتر المباشر/);
+    const refreshed=await fetch(base+"/viewer-state?ticket="+viewerTicket);
+    assert.equal(refreshed.status,200);
+    assert.ok((await refreshed.json()).streamUrl);
+    assert.equal((await fetch(base+"/viewer-state?ticket=invalid")).status,401);
     const ticket = new URL(bootstrap.streamUrl).searchParams.get("ticket");
     const live = new WebSocket(`ws://127.0.0.1:${port}/live?ticket=${ticket}`);
     await new Promise((resolve, reject) => { live.once("open", resolve); live.once("error", reject); });
@@ -102,8 +106,13 @@ test("private live-view resource, auth, monitor selection and frame delivery", a
     live.send(JSON.stringify({ type: "select", source: "browser" }));
     await new Promise(resolve => setTimeout(resolve, 50));
     capture.send(JSON.stringify({ type:"capture_state", active:true, mimeType:"video/webm;codecs=vp8,opus", audio:true }));
+    const partial=Buffer.from("not-an-initialization-segment");
+    capture.send(JSON.stringify({type:"capture_chunk",sequence:9}));
+    capture.send(partial,{binary:true});
+    await new Promise(resolve=>setTimeout(resolve,60));
+    assert.ok(!messages.some(item=>item.binary&&item.data.equals(partial)),"late viewer waits for WebM initialization");
     const webm = Buffer.from("test-webm-chunk");
-    capture.send(JSON.stringify({ type:"capture_chunk", mimeType:"video/webm;codecs=vp8,opus", sequence:0, at:Date.now(), width:1920, height:1080, fps:60, audio:true }));
+    capture.send(JSON.stringify({ type:"capture_chunk", mimeType:"video/webm;codecs=vp8,opus", sequence:0, segmentStart:true, at:Date.now(), width:1920, height:1080, fps:60, audio:true }));
     capture.send(webm, { binary:true });
     for (let i = 0; i < 40 && !messages.some(item => item.binary && item.data.equals(webm)); i++) await new Promise(resolve => setTimeout(resolve, 25));
     assert.ok(messages.some(item => !item.binary && JSON.parse(item.data.toString()).type === "webm"), "browser stream metadata reaches viewer");
@@ -159,5 +168,4 @@ test("private live-view resource, auth, monitor selection and frame delivery", a
     await new Promise(resolve => child.exitCode !== null ? resolve() : child.once("exit", resolve));
   }
 });
-
 

@@ -7,16 +7,32 @@ function harness(initial=null, toolResult=null) {
   const html=readFileSync(new URL('./live-view.html',import.meta.url),'utf8');
   const script=html.match(/<script>([\s\S]*?)<\/script>/)?.[1]?.replace('__GPT_US_BOOTSTRAP_STATE__',JSON.stringify(initial));
   const calls=[]; const sockets=[]; const timers=new Map(); let timerId=0;
-  const node=()=>({textContent:'',value:'',src:'',options:[],listeners:{},style:{setProperty(){}},classList:{ready:false,add(){this.ready=true},remove(){this.ready=false}},replaceChildren(...items){this.options=items},addEventListener(type,fn){this.listeners[type]=fn},requestFullscreen(){}});
+const node=()=>({textContent:'',value:'',src:'',options:[],listeners:{},style:{setProperty(){}},classList:{ready:false,add(){this.ready=true},remove(){this.ready=false}},replaceChildren(...items){this.options=items},addEventListener(type,fn){this.listeners[type]=fn},removeAttribute(){},requestFullscreen(){},play(){return Promise.resolve()},pause(){},load(){}});
   const elements=Object.fromEntries(['screen','frame','video','message','status','monitor','toggle','audio','expand'].map(id=>[id,node()]));
   class FakeWebSocket { static OPEN=1; constructor(url){this.url=url;this.readyState=1;this.sent=[];sockets.push(this)} send(value){this.sent.push(JSON.parse(value))} close(){this.readyState=3} }
   const openTargets=[]; const displayModes=[];
-  const window={parent:{postMessage(){}},addEventListener(){},openai:{displayMode:'inline',async callTool(name,args){calls.push({name,args});return {structuredContent:toolResult};},async requestDisplayMode({mode}){displayModes.push(mode);this.displayMode=mode;return {mode}},setOpenInAppUrl(target){openTargets.push(target)}}};
+  const windowEvents={}; const documentEvents={}; const intervals=new Map();
+  const window={parent:{postMessage(){}},addEventListener(type,fn){windowEvents[type]=fn},openai:{displayMode:'inline',async callTool(name,args){calls.push({name,args});return {structuredContent:toolResult};},async requestDisplayMode({mode}){displayModes.push(mode);this.displayMode=mode;return {mode}},setOpenInAppUrl(target){openTargets.push(target)}}};
   class FakeFileReader { readAsDataURL(){this.result='data:image/webp;base64,QUJD';this.onload?.()} }
-  const context={window,WebSocket:FakeWebSocket,Blob:class{},FileReader:FakeFileReader,document:{body:node(),hidden:false,fullscreenElement:null,exitFullscreen(){},addEventListener(){},getElementById:id=>elements[id],createElement:node},performance:{now:()=>10},setTimeout(fn){const id=++timerId;timers.set(id,fn);return id},clearTimeout(id){timers.delete(id)},Map,Promise,Error,String,Number,Math,JSON};
+const context={window,WebSocket:FakeWebSocket,Blob:class{},FileReader:FakeFileReader,document:{body:node(),hidden:false,fullscreenElement:null,exitFullscreen(){},addEventListener(type,fn){documentEvents[type]=fn},getElementById:id=>elements[id],createElement:node},performance:{now:()=>10},setTimeout(fn){const id=++timerId;timers.set(id,fn);return id},clearTimeout(id){timers.delete(id)},setInterval(fn){const id=++timerId;intervals.set(id,fn);return id},clearInterval(id){intervals.delete(id)},Map,Promise,Error,String,Number,Math,JSON};
   vm.runInNewContext(script,context);
-  return {calls,sockets,timers,elements,openTargets,displayModes};
+  return {calls,sockets,timers,elements,openTargets,displayModes,windowEvents,documentEvents,intervals,document:context.document};
 }
+
+test('hidden or closed viewer stops sending immediately',()=>{
+  const state={connected:true,streamUrl:'wss://bridge/live?ticket=secret',monitors:[{index:0,name:'Primary',primary:true}]};
+  for (const event of ['hidden','pagehide']) {
+    const h=harness(state,state); const socket=h.sockets[0]; socket.onopen();
+    assert.equal(h.intervals.size,1);
+    if(event==='hidden'){h.document.hidden=true;h.documentEvents.visibilitychange();}else h.windowEvents.pagehide();
+    assert.equal(socket.readyState,3);
+    assert.equal(socket.sent.at(-1).type,'pause');
+    assert.equal(h.intervals.size,0);
+    assert.equal(h.elements.toggle.textContent,'متابعة');
+    // Restoration is tested separately; hidden views must stop immediately.
+    assert.equal(h.sockets.length,1);
+  }
+});
 
 test('viewer recovers state and opens the private websocket stream',async()=>{
   const state={connected:true,streamUrl:'wss://bridge/live?ticket=secret',viewerUrl:'https://bridge/viewer?ticket=secret',monitors:[{index:0,name:'Primary',width:1200,height:800,primary:true},{index:1,name:'Second',width:1200,height:800,primary:false}]};
@@ -62,3 +78,19 @@ test('expand button grows inline and keeps ChatGPT below the viewer',async()=>{
 });
 
 
+test('mobile visibility restoration requests fresh credentials without reloading',async()=>{
+ const state={connected:true,streamUrl:'wss://bridge/live?ticket=secret',monitors:[{index:0,name:'Primary',primary:true}]};
+ const h=harness(state,state);h.sockets[0].onopen();
+ h.document.hidden=true;h.documentEvents.visibilitychange();
+ h.document.hidden=false;h.documentEvents.visibilitychange();
+ for(let i=0;i<8;i++)await Promise.resolve();
+ assert.equal(h.calls.at(-1).name,'live_view_state');
+ assert.equal(h.sockets.length,2);
+});
+test('browser video stays in waiting state until a decoded frame exists',()=>{
+ const state={connected:true,browserCapture:{active:true,connected:true},streamUrl:'wss://bridge/live?ticket=secret',monitors:[]};
+ const h=harness(state,state);
+ assert.equal(h.elements.monitor.value,'browser');
+ h.elements.video.listeners.loadeddata();
+ assert.equal(h.elements.screen.classList.ready,true);
+});

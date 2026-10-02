@@ -9,11 +9,12 @@ internal static partial class Program
   var command=S(args,"command");
   if(string.IsNullOrWhiteSpace(command)||command.Length>4000)throw new ArgumentException("Command must contain 1–4000 characters");
   var timeout=Math.Clamp(I(args,"timeoutMs",15000),1000,30000);
-  var start=new ProcessStartInfo(System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),"cmd.exe")){
+  bool powershell=S(args,"shell","cmd")=="powershell";
+  var start=new ProcessStartInfo(System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),powershell?"WindowsPowerShell/v1.0/powershell.exe":"cmd.exe")){
    UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true,
    WorkingDirectory=Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)
   };
-  start.ArgumentList.Add("/d");start.ArgumentList.Add("/s");start.ArgumentList.Add("/c");start.ArgumentList.Add(command);
+  if(powershell){start.ArgumentList.Add("-NoProfile");start.ArgumentList.Add("-NonInteractive");start.ArgumentList.Add("-Command");}else{start.ArgumentList.Add("/d");start.ArgumentList.Add("/s");start.ArgumentList.Add("/c");}start.ArgumentList.Add(command);
   using var process=new Process{StartInfo=start};
   if(!process.Start())throw new InvalidOperationException("Could not start command prompt");
   using var cancel=new CancellationTokenSource(timeout);

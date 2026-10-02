@@ -11,6 +11,7 @@ button:hover{background:#233e57}.number{display:inline-grid;place-items:center;w
 footer{color:#a9bed0;font-size:12px;margin-top:12px}
 </style></head>
 <body><div class="head"><h1 id="title">الخطوة التالية</h1><span class="status" id="status">بانتظار الحالة…</span></div>
+<div id="workflow" hidden><p id="progress" role="status"></p><button id="pause-task" type="button">إيقاف المهمة مؤقتًا</button></div>
 <div class="options" id="options" aria-live="polite"></div>
 <footer>اختر رقمًا أو قل الرقم بصوتك. سيُراجع ChatGPT الصفحة أو الشاشة قبل تنفيذ الخطوة. الخيارات محفوظة محليًا عند اتصال البرنامج والإضافة.</footer>
 <script>
@@ -27,7 +28,16 @@ footer{color:#a9bed0;font-size:12px;margin-top:12px}
       value.error?item.reject(Error(value.error.message||'فشل الطلب')):item.resolve(value.result);}
     if(value.method==='ui/notifications/tool-result')render(value.params?.structuredContent);
   });
-  function render(state){if(!state||typeof state!=='object'||state.revision===revision)return;revision=state.revision;
+  document.getElementById('pause-task').addEventListener('click',async()=>{
+    try{await rpc('tools/call',{name:'workflow_pause',arguments:{}});document.getElementById('progress').textContent='تم طلب الإيقاف بعد الفعل الجاري';}
+    catch(error){document.getElementById('progress').textContent=error.message;}
+  });
+  function render(state){if(!state||typeof state!=='object')return;revision=state.revision;
+    const task=state.workflow;document.getElementById('workflow').hidden=!task;
+    if(task){
+      const labels={ready:'جاهزة',running:'قيد التنفيذ',paused:'متوقفة مؤقتًا',needs_review:'تحتاج تحققًا',complete:'مكتملة',cancelled:'ملغاة'};
+      document.getElementById('progress').textContent=task.task+' — '+task.index+'/'+task.steps.length+' خطوات متحققة — '+(labels[task.status]||task.status)+(task.reason?' — '+task.reason:'');
+    }
     title.textContent=state.title||'الخطوة التالية';status.textContent=state.phase==='working'?`جارٍ تنفيذ ${state.lastTool||'الأمر'}…`:state.phase==='error'?'تعذر تنفيذ آخر أمر':'جاهز';
     options.replaceChildren();for(const item of Array.isArray(state.options)?state.options:[]){
       if(!Number.isInteger(item.number)||item.number<0||item.number>9)continue;
