@@ -55,8 +55,8 @@ test("private live-view resource, auth, monitor selection and frame delivery", a
     const initialized = await rpc(1, "initialize", { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "live-view-test", version: "1" } });
     assert.match(initialized.result.instructions, /نفّذ أولًا، ثم تحقق/);
     const tools = (await rpc(2, "tools/list", {})).result.tools;
-    assert.equal(tools.find(t => t.name === "open_live_view")._meta.ui.resourceUri, "ui://gpt-us/live-view-v30.html");
-    assert.equal(tools.find(t => t.name === "open_live_view")._meta["openai/outputTemplate"], "ui://gpt-us/live-view-v30.html");
+    assert.equal(tools.find(t => t.name === "open_live_view")._meta.ui.resourceUri, "ui://gpt-us/live-view-v31.html");
+    assert.equal(tools.find(t => t.name === "open_live_view")._meta["openai/outputTemplate"], "ui://gpt-us/live-view-v31.html");
     assert.equal(tools.find(t => t.name === "open_live_view")._meta["openai/widgetAccessible"], true);
     assert.deepEqual(tools.find(t => t.name === "live_view_frame")._meta.ui.visibility, ["app"]);
     assert.deepEqual(tools.find(t => t.name === "live_view_state")._meta.ui.visibility, ["app"]);
@@ -71,10 +71,10 @@ test("private live-view resource, auth, monitor selection and frame delivery", a
     assert.match(smartResource.result.contents[0].text, /الخطوة التالية/);
     const smartOpened = await rpc(31, "tools/call", { name: "open_smart_panel", arguments: { task: "غيّر الصوت" } });
     assert.equal(smartOpened.result.structuredContent.phase, "idle");
-    const resource = await rpc(3, "resources/read", { uri: "ui://gpt-us/live-view-v30.html" });
+    const resource = await rpc(3, "resources/read", { uri: "ui://gpt-us/live-view-v31.html" });
     assert.match(resource.result.contents[0].text, /الكمبيوتر المباشر/);
     assert.match(resource.result.contents[0].text, /const embeddedState = null/);
-    for(let version=23;version<=29;version++){
+    for(let version=23;version<=30;version++){
       const oldUri=`ui://gpt-us/live-view-v${version}.html`;
       const cachedResource=await rpc(100+version,'resources/read',{uri:oldUri});
       assert.equal(cachedResource.error,undefined);
@@ -130,6 +130,16 @@ test("private live-view resource, auth, monitor selection and frame delivery", a
     assert.equal(await oldClosed, 4002, "new viewer replaces old even with legacy parallel flag");
     newest.send(JSON.stringify({type:"select",screen:0,mode:"jpeg"}));
     await new Promise(resolve => setTimeout(resolve, 150));
+    const controlReplies=[];newest.on('message',raw=>{try{const value=JSON.parse(raw.toString());if(value.type==='control_result')controlReplies.push(value);}catch{}});
+    newest.send(JSON.stringify({type:'control',id:101,command:'pad',args:{operation:'move',dx:12,dy:-9}}));
+    newest.send(JSON.stringify({type:'control',id:102,command:'text',args:{text:'مرحبا'}}));
+    newest.send(JSON.stringify({type:'control',id:103,command:'run_command',args:{command:'invalid'}}));
+    for(let i=0;i<30&&controlReplies.length<3;i++)await new Promise(r=>setTimeout(r,20));
+    assert.equal(controlReplies.find(r=>r.id===101)?.ok,true);
+    assert.equal(controlReplies.find(r=>r.id===102)?.ok,true);
+    assert.equal(controlReplies.find(r=>r.id===103)?.ok,false);
+    assert.ok(commands.some(c=>c.command==='desktop_mouse_action'&&c.args.kind==='pad'&&c.args.dx===12));
+    assert.ok(commands.some(c=>c.command==='desktop_type_text'&&c.args.text==='مرحبا'));
     newest.send(JSON.stringify({type:"pause"}));
     await new Promise(resolve => setTimeout(resolve, 150));
     const pausedCount = commands.filter(c=>c.command==="desktop_stream_frame").length;

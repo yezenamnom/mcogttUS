@@ -29,7 +29,7 @@ const HOSTINGER_SFTP_DIR = process.env.HOSTINGER_SFTP_DIR || "";
 const HOSTINGER_SCREENSHOT_BASE_URL = (process.env.HOSTINGER_SCREENSHOT_BASE_URL || "").replace(/\/$/, "");
 // ChatGPT treats the resource URI as the component cache key. Keep each
 // published component immutable and bump the URI whenever its HTML changes.
-const LIVE_VIEW_URI = "ui://gpt-us/live-view-v30.html";
+const LIVE_VIEW_URI = "ui://gpt-us/live-view-v31.html";
 const PUBLIC_ORIGIN = (process.env.OAUTH_ISSUER || "https://mcogttus-production.up.railway.app").replace(/\/$/, "");
 const LIVE_WS_ORIGIN = PUBLIC_ORIGIN.replace(/^https:/, "wss:").replace(/^http:/, "ws:");
 const LIVE_VIEW_HTML = readFileSync(new URL("./live-view.html", import.meta.url), "utf8");
@@ -204,7 +204,7 @@ function callDesktop(command, args = {}, timeoutMs = 30000) {
 }
 
 function makeMcpServer() {
-  const server = new McpServer({ name: "gpt-us-browser-desktop", version: "0.8.2" }, { instructions: instructionStore.get().text });
+  const server = new McpServer({ name: "gpt-us-browser-desktop", version: "0.8.3" }, { instructions: instructionStore.get().text });
 
   // Some ChatGPT connector hosts forward the app-qualified tool name back to
   // the MCP server (for example `gpt_us.bridge_info`) instead of stripping the
@@ -332,7 +332,7 @@ function makeMcpServer() {
   server.registerResource("gpt-us-live-view", LIVE_VIEW_URI, liveResourceConfig, liveResource(LIVE_VIEW_URI));
   // ChatGPT may retain outputTemplate metadata from an earlier tool discovery.
   // Keep those advertised resources readable after deploying a new viewer.
-  for(let version=23;version<=29;version++){
+  for(let version=23;version<=30;version++){
     const uri=`ui://gpt-us/live-view-v${version}.html`;
     server.registerResource(`gpt-us-live-view-v${version}-compat`,uri,liveResourceConfig,liveResource(uri));
   }
@@ -883,7 +883,7 @@ const httpServer = http.createServer(async (req, res) => {
     res.end(JSON.stringify({
       ok: true,
       service: "comet-chatgpt-bridge",
-      version: "0.8.2",
+      version: "0.8.3",
       mcp: "ready",
       browserConnected: !!browserSocket && browserSocket.readyState === WebSocket.OPEN,
       browserConnectedAt,
@@ -896,7 +896,7 @@ const httpServer = http.createServer(async (req, res) => {
 
   if (url.pathname === "/" && req.method === "GET") {
     res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({ service: "comet-chatgpt-bridge", version: "0.8.2", status: "ok", mcp: "/mcp" }));
+    res.end(JSON.stringify({ service: "comet-chatgpt-bridge", version: "0.8.3", status: "ok", mcp: "/mcp" }));
     return;
   }
 
@@ -1039,6 +1039,23 @@ liveWss.on("connection", (socket, req) => {
       if(socket.readyState!==WebSocket.OPEN || activeLiveViewer!==socket)return;
       if (message.type === "heartbeat") { lastHeartbeat = Date.now(); if(Date.now()-lastTicketRefresh>60000){lastTicketRefresh=Date.now();sendJson({type:"ticket",...issueLiveTicket()});} return; }
       lastHeartbeat = Date.now();
+      if(message.type==='control'){
+        if(!active||!socket.liveActive)return;
+        const id=message.id, a=message.args||{};
+        let command,args;
+        if(message.command==='pad'&&['move','click','scroll'].includes(a.operation)&&Number.isFinite(a.dx)&&Number.isFinite(a.dy)&&Math.abs(a.dx)<=1000&&Math.abs(a.dy)<=1000){
+          command='desktop_mouse_action';args={kind:'pad',operation:a.operation,dx:Math.round(a.dx),dy:Math.round(a.dy),button:a.button==='right'?'right':'left',count:a.count===2?2:1,delta:Math.max(-1200,Math.min(1200,Number(a.delta)||0))};
+        }else if(message.command==='text'&&typeof a.text==='string'&&a.text.length>0&&a.text.length<=2000){command='desktop_type_text';args={text:a.text};}
+        else if(message.command==='key'&&['ENTER','BACKSPACE','TAB','ESC','LEFT','RIGHT','UP','DOWN'].includes(a.key)){command='desktop_key_combo';args={keys:[a.key]};}
+        else {sendJson({type:'control_result',id,ok:false,error:'Invalid control request'});return;}
+        if((socket.controlPending||0)>=24){sendJson({type:'control_result',id,ok:false,error:'Control busy'});return;}
+        socket.controlPending=(socket.controlPending||0)+1;
+        socket.controlQueue=(socket.controlQueue||Promise.resolve()).then(async()=>{
+          if(socket.readyState!==WebSocket.OPEN||activeLiveViewer!==socket||!active)throw Error('Viewer inactive');
+          return callDesktop(command,args,10000);
+        }).then(result=>sendJson({type:'control_result',id,ok:true,result}),error=>sendJson({type:'control_result',id,ok:false,error:error.message})).finally(()=>socket.controlPending--);
+        return;
+      }
       if (message.type === "select" && message.source === "browser") {
         source="browser"; socket.liveSource="browser"; socket.awaitingCaptureInit=true; active=true; socket.liveActive=true; pushMode=false; livePushSubscribers.delete(socket);
         void callDesktop("desktop_mouse_action",{kind:"live_stream_stop"},3000).catch(()=>{});
@@ -1147,7 +1164,7 @@ wss.on("connection", (socket, req) => {
 });
 
 httpServer.listen(PORT, "0.0.0.0", () => {
-  console.log(`Comet ChatGPT Bridge v0.8.2 listening on 0.0.0.0:${PORT}`);
+  console.log(`Comet ChatGPT Bridge v0.8.3 listening on 0.0.0.0:${PORT}`);
   console.log("MCP v2 handler ready at /mcp | WSS /browser + /desktop + /capture | health /health");
 });
 

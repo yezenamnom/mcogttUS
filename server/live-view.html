@@ -21,6 +21,9 @@
     .message { position: absolute; padding: 20px; text-align: center; line-height: 1.6; color: #b6c9e3; }
     .screen.ready .message { display: none; }
     footer { margin-top: 9px; color: #9caec4; font-size: 12px; }
+    .controls { margin-top: 10px; border: 1px solid #444; border-radius: 10px; padding: 10px; }
+    .pad { touch-action: none; user-select: none; height: 150px; display: grid; place-items: center; background: #20202b; border: 1px dashed #8d83bb; border-radius: 10px; color: #b6c9e3; }
+    .controls textarea { width: 100%; min-height: 60px; background: #222; color: white; font: inherit; border: 1px solid #555; border-radius: 8px; padding: 8px; }
     body.expanded .screen { height: min(78vh, 900px); }
     @media (max-width: 680px) { body { padding: max(8px, env(safe-area-inset-top)) 8px max(8px, env(safe-area-inset-bottom)); } .bar { gap: 6px; } h1 { width: 100%; margin: 0; } select { max-width: 100%; flex: 1 1 210px; } select, button { padding: 7px 9px; } .screen { height: 58dvh; min-height: 260px; } body.expanded .screen { height: 72dvh; } }
   </style>
@@ -35,6 +38,11 @@
     <span class="badge" id="status" role="status">جارٍ الاتصال…</span>
   </div>
   <div class="screen" id="screen"><img id="frame" alt="عرض مباشر لشاشة الكمبيوتر"><video id="video" autoplay muted playsinline></video><div class="message" id="message">بانتظار الاتصال بالكمبيوتر…</div></div>
+  <section class="controls" aria-label="التحكم اليدوي بالكمبيوتر">
+    <div class="bar"><button id="padToggle" type="button">لوحة لمس</button><button id="keyboardToggle" type="button">فتح الكيبورد</button><span id="controlStatus" class="badge" role="status">التحكم بالكمبيوتر والنافذة التي عليها التركيز</span></div>
+    <div id="padPanel" hidden><div id="touchpad" class="pad" aria-label="لوحة لمس لتحريك ماوس الكمبيوتر">حرّك بإصبع · اضغط للنقر · إصبعان للتمرير</div><div class="bar"><button id="leftClick" type="button">نقرة يسار</button><button id="rightClick" type="button">نقرة يمين</button><button id="doubleClick" type="button">نقرتان</button></div></div>
+    <div id="keyboardPanel" hidden><textarea id="remoteText" aria-label="النص المراد كتابته على الكمبيوتر" placeholder="اكتب هنا ثم اضغط إرسال النص" autocapitalize="off" spellcheck="false"></textarea><div class="bar"><button id="sendText" type="button">إرسال النص</button><button id="enterKey" type="button">Enter</button><button id="backspaceKey" type="button">⌫</button><button id="tabKey" type="button">Tab</button><button id="escapeKey" type="button">Esc</button></div></div>
+  </section>
   <footer>خاص بحسابك عبر موصل GPT US. تُطلب اللقطات أثناء فتح هذه اللوحة فقط؛ لا تُنشر على رابط عام. يمكنك كتابة أوامر التحكم في محادثة ChatGPT.</footer>
   <script>
     (() => {
@@ -70,6 +78,27 @@
       const toggle = document.getElementById('toggle');
       const audioButton = document.getElementById('audio');
       const expandButton = document.getElementById('expand');
+      const controlStatus=document.getElementById('controlStatus');
+      const pad=document.getElementById('touchpad'), pointers=new Map();
+      let padTimer=null, dx=0,dy=0;
+      const sentTexts=new Map();
+      function control(command,args){
+        if(!active||document.hidden||stream?.readyState!==WebSocket.OPEN){controlStatus.textContent='اتصل بالبث وتابع العرض أولًا';return false;}
+        const id=requestId++;stream.send(JSON.stringify({type:'control',id,command,args}));if(command==='text')sentTexts.set(id,args.text);controlStatus.textContent='جارٍ التنفيذ…';return true;
+      }
+      function flushPad(){if(padTimer){clearTimeout(padTimer);padTimer=null;}if(dx||dy){control('pad',{operation:'move',dx:Math.max(-1000,Math.min(1000,Math.round(dx))),dy:Math.max(-1000,Math.min(1000,Math.round(dy)))});dx=dy=0;}}
+      function padClick(button='left',count=1){flushPad();control('pad',{operation:'click',dx:0,dy:0,button,count});}
+      document.getElementById('padToggle')?.addEventListener('click',()=>{const panel=document.getElementById('padPanel');panel.hidden=!panel.hidden;});
+      document.getElementById('keyboardToggle')?.addEventListener('click',()=>{const panel=document.getElementById('keyboardPanel');panel.hidden=!panel.hidden;if(!panel.hidden)document.getElementById('remoteText').focus();});
+      pad?.addEventListener('pointerdown',e=>{e.preventDefault();pad.setPointerCapture(e.pointerId);if(pointers.size)for(const p of pointers.values())p.moved=true;pointers.set(e.pointerId,{x:e.clientX,y:e.clientY,start:performance.now(),distance:0,moved:pointers.size>0});});
+      pad?.addEventListener('pointermove',e=>{const p=pointers.get(e.pointerId);if(!p)return;e.preventDefault();const mx=e.clientX-p.x,my=e.clientY-p.y;p.x=e.clientX;p.y=e.clientY;p.distance+=Math.abs(mx)+Math.abs(my);if(p.distance>6)p.moved=true;if(pointers.size>1){flushPad();if(Math.abs(my)>=2)control('pad',{operation:'scroll',dx:0,dy:0,delta:Math.round(-my*8)});}else{dx+=mx*1.5;dy+=my*1.5;if(!padTimer)padTimer=setTimeout(flushPad,50);}});
+      pad?.addEventListener('pointerup',e=>{const p=pointers.get(e.pointerId);pointers.delete(e.pointerId);if(p&&!p.moved&&performance.now()-p.start<450)padClick();else flushPad();});
+      pad?.addEventListener('pointercancel',e=>{pointers.delete(e.pointerId);dx=dy=0;if(padTimer)clearTimeout(padTimer);padTimer=null;});
+      document.getElementById('leftClick')?.addEventListener('click',()=>padClick());
+      document.getElementById('rightClick')?.addEventListener('click',()=>padClick('right'));
+      document.getElementById('doubleClick')?.addEventListener('click',()=>padClick('left',2));
+      document.getElementById('sendText')?.addEventListener('click',()=>{const input=document.getElementById('remoteText');if(sentTexts.size)return;if(input.value.length>2000){controlStatus.textContent='أرسل حتى 2000 حرف في المرة';return;}if(input.value)control('text',{text:input.value});});
+      for(const [id,key] of [['enterKey','ENTER'],['backspaceKey','BACKSPACE'],['tabKey','TAB'],['escapeKey','ESC']])document.getElementById(id)?.addEventListener('click',()=>control('key',{key}));
       let expandedMode = false;
       function playAudio(arrayBuffer, info) {
         if (!audioEnabled || !audioContext || !info?.sampleRate || !info?.channels) return;
@@ -256,6 +285,7 @@
           if (typeof event.data === 'string') {
             try {
               const data = JSON.parse(event.data);
+              if(data.type==='control_result'){const input=document.getElementById('remoteText');if(data.ok&&sentTexts.has(data.id)&&input.value===sentTexts.get(data.id))input.value='';sentTexts.delete(data.id);controlStatus.textContent=data.ok?'تم إرسال الإدخال إلى الكمبيوتر':`تعذّر التحكم: ${data.error}`;return;}
               if(data.type==='ticket' && latest){Object.assign(latest,data);return;}
               if (data.type === 'frame') { pendingFrameInfo = data; pendingPacketInfo = data; }
               else if (data.type === 'audio' || data.type === 'h264' || data.type === 'webm') pendingPacketInfo = data;

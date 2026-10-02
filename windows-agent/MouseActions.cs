@@ -20,6 +20,20 @@ internal static partial class Program
   if(S(a,"kind")=="smart_actions_read")return SmartActionsRead();
   if(S(a,"kind")=="smart_actions_choose")return SmartActionsChoose(a);
   var kind=S(a,"kind","click");
+  if(kind=="pad"){
+   if(!GetCursorPos(out var cursor))throw new InvalidOperationException("Cannot read cursor");
+   int dx=I(a,"dx"),dy=I(a,"dy");
+   if(Math.Abs((long)dx)>1000||Math.Abs((long)dy)>1000)throw new ArgumentException("Invalid pad movement");
+   var bounds=System.Windows.Forms.SystemInformation.VirtualScreen;
+   int px=Math.Clamp(cursor.X+dx,bounds.Left,bounds.Right-1),py=Math.Clamp(cursor.Y+dy,bounds.Top,bounds.Bottom-1);
+   await Smooth(px,py,0);
+   string operation=S(a,"operation","move");
+   if(operation=="click")Click(S(a,"button","left"),I(a,"count",1)==2?2:1);
+   else if(operation=="scroll")MouseInput(0x0800u,data:unchecked((uint)Math.Clamp(I(a,"delta"),-1200,1200)));
+   else if(operation!="move")throw new ArgumentException("Invalid pad operation");
+   if(!GetCursorPos(out var final))throw new InvalidOperationException("Cannot verify cursor");
+   return new{executed=true,x=final.X,y=final.Y,targetReached=final.X==px&&final.Y==py};
+  }
   if(kind is not ("move" or "click" or "double" or "right" or "drag" or "scroll"))
    throw new ArgumentException("Unknown mouse action");
   string button=kind=="right"?"right":S(a,"button","left");
