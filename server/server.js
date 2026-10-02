@@ -1,4 +1,5 @@
 import http from "node:http";
+import { imageResult } from "./image-results.js";
 import { Workflows } from "./workflows.js";
 import { TargetState, verifiedControl } from "./verified-control.js";
 import { Instructions } from "./instructions.js";
@@ -565,7 +566,7 @@ function makeMcpServer() {
         results.push({ ok:false, command:a.command, error:e?.message || String(e) });
       }
     }
-    return { content: [{ type: "text", text: JSON.stringify({ completed:true, count:results.length, results }, null, 2) }] };
+    return imageResult({ completed:true, count:results.length, results });
   });
 
   server.registerTool("list_tabs", {

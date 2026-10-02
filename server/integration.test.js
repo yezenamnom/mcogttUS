@@ -21,7 +21,8 @@ test("MCP routes combined mouse operations to desktop and serves health",async()
   const commands=[];
   socket.on("message",data=>{
    const m=JSON.parse(data);commands.push(m);
-   socket.send(JSON.stringify({type:"result",id:m.id,ok:true,result:{executed:true,kind:m.args.kind,x:m.args.x,y:m.args.y}}));
+   const result=m.command==='desktop_screenshot'?{data:'QUJD',mimeType:'image/png',width:2560,height:1440}:{executed:true,kind:m.args.kind,x:m.args.x,y:m.args.y};
+   socket.send(JSON.stringify({type:"result",id:m.id,ok:true,result}));
   });
   let session;
   async function rpc(id,method,params){
@@ -62,6 +63,12 @@ test("MCP routes combined mouse operations to desktop and serves health",async()
   assert.equal(shell.result.isError,undefined);
   assert.equal(commands.at(-1).args.kind,"run_command");
   assert.equal(commands.at(-1).args.command,"whoami");
+  const screenshot=await rpc(7,'tools/call',{name:'batch_actions',arguments:{actions:[{command:'desktop_screenshot'}]}});
+  assert.equal(screenshot.result.content[0].type,'image');
+  assert.equal(screenshot.result.content[0].data,'QUJD');
+  const screenshotMeta=JSON.parse(screenshot.result.content[1].text);
+  assert.equal(screenshotMeta.results[0].result.width,2560);
+  assert.equal(screenshotMeta.results[0].result.data,undefined);
   assert.equal((await (await fetch(base+"/health")).json()).desktopConnected,true);
  }finally{socket?.close();child.kill();await new Promise(r=>child.exitCode!==null?r():child.once("exit",r));}
 });
