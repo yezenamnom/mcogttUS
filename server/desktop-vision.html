@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    html,body{margin:0;background:transparent;color:inherit;font:14px system-ui,sans-serif}
+    #status{padding:8px 4px}
+  </style>
+</head>
+<body>
+  <div id="status" role="status">جارٍ إرفاق لقطة الشاشة بالمحادثة…</div>
+  <script>
+    (() => {
+      const status=document.getElementById('status');
+      let started=false;
+      function snapshotFromHost() {
+        const host=window.openai;
+        const metadata=host?.toolResponseMetadata;
+        const result=metadata?.mcp_tool_result||metadata?.call_tool_result||metadata;
+        return result?._meta?.snapshot||metadata?._meta?.snapshot||null;
+      }
+      async function attach() {
+        if(started) return;
+        const snapshot=snapshotFromHost();
+        if(!snapshot?.data) return;
+        started=true;
+        const host=window.openai;
+        if(typeof host?.uploadFile!=='function'||typeof host?.setWidgetState!=='function'||typeof host?.sendFollowUpMessage!=='function') {
+          status.textContent='واجهة ChatGPT هذه لا تدعم إرفاق لقطة الشاشة تلقائيًا.';
+          return;
+        }
+        try {
+          const binary=atob(snapshot.data);
+          const bytes=new Uint8Array(binary.length);
+          for(let i=0;i<binary.length;i++) bytes[i]=binary.charCodeAt(i);
+          const file=new File([bytes],`gpt-us-screen-${snapshot.screen+1}.jpg`,{type:snapshot.mimeType||'image/jpeg'});
+          const uploaded=await host.uploadFile(file,{library:false});
+          const fileId=uploaded?.fileId;
+          if(!fileId) throw new Error('لم يُرجع ChatGPT معرّف الصورة');
+          host.setWidgetState({
+            modelContent:`لقطة جديدة للشاشة ${snapshot.screen+1} جاهزة للتحليل. استند إلى الصورة المرفقة، لا إلى وصف سابق.`,
+            privateContent:{screen:snapshot.screen},
+            imageIds:[fileId]
+          });
+          status.textContent=`أُرفقت صورة الشاشة ${snapshot.screen+1} بالمحادثة.`;
+          await host.sendFollowUpMessage({
+            prompt:`حلّل الصورة المرفقة للشاشة ${snapshot.screen+1} وأجب عن سؤال المستخدم الأخير حول ما يظهر فيها. الصورة مرفقة الآن؛ لا تطلب لقطة أخرى في هذه الرسالة. إن لم تكن الصورة مرئية لك، قل ذلك بوضوح.`,
+            scrollToBottom:false
+          });
+        } catch(error) {
+          status.textContent=`تعذّر إرفاق الصورة: ${error?.message||'خطأ غير معروف'}`;
+        }
+      }
+      window.addEventListener('openai:set_globals',attach);
+      attach();
+    })();
+  </script>
+</body>
+</html>
+
