@@ -150,6 +150,13 @@ internal static partial class Program
     static bool Has(JsonElement a, string n) => a.ValueKind == JsonValueKind.Object && a.TryGetProperty(n, out _); static int I(JsonElement a, string n, int d = 0) => Has(a, n) && a.GetProperty(n).TryGetInt32(out var v) ? v : d; static string S(JsonElement a, string n, string d = "") => Has(a, n) ? a.GetProperty(n).GetString() ?? d : d; static bool B(JsonElement a, string n, bool d = false) => Has(a, n) && a.GetProperty(n).ValueKind is JsonValueKind.True or JsonValueKind.False ? a.GetProperty(n).GetBoolean() : d; static T Safe<T>(Func<T> f, T d) { try { return f(); } catch { return d; } }
     static string CP => System.IO.Path.Combine(AppContext.BaseDirectory, "settings.json"); static AppConfig Load() { try { return File.Exists(CP) ? JsonSerializer.Deserialize<AppConfig>(File.ReadAllText(CP), J) ?? new() : new(); } catch { return new(); } }
     static void Save() => File.WriteAllText(CP, JsonSerializer.Serialize(Config, J));
+    static class Clipboard
+    {
+        static T OnUi<T>(Func<T> action) { var form = MainWindow ?? throw new InvalidOperationException("Desktop window unavailable"); if (form.InvokeRequired) return (T)form.Invoke(action); return action(); }
+        public static bool ContainsText() => OnUi(System.Windows.Forms.Clipboard.ContainsText);
+        public static string GetText() => OnUi(System.Windows.Forms.Clipboard.GetText);
+        public static void SetText(string text) => OnUi(() => { System.Windows.Forms.Clipboard.SetText(text); return true; });
+    }
     sealed class AppConfig { public string BridgeUrl { get; set; } = "https://mcogttus-production.up.railway.app"; public string BridgeToken { get; set; } = ""; public bool LocalServerEnabled { get; set; } = true; public int LocalPort { get; set; } = 8765; public int MouseUpdateHz { get; set; } = 240; public PermissionSet Permissions { get; set; } = new(); }
     sealed class PermissionSet
     {
@@ -167,4 +174,5 @@ internal static partial class Program
         public void Set(string n, bool v) { if (n == "screen") Screen = v; else if (n == "mouse") Mouse = v; else if (n == "keyboard") Keyboard = v; else if (n == "clipboard") Clipboard = v; else if (n == "windows") Windows = v; else if (n == "filesRead") FilesRead = v; else if (n == "filesWrite") FilesWrite = v; else if (n == "processes") Processes = v; else if (n == "commands") Commands = v; else System = v; }
     }
 }
+
 
