@@ -1,7 +1,7 @@
 let ws = null;
 let reconnectTimer = null;
 let pingTimer = null;
-const EXT_VERSION = "0.12.0";
+const EXT_VERSION = "0.12.2";
 const domState = new Map();
 const cdpAttached = new Set();
 const networkState = new Map();
@@ -172,7 +172,8 @@ async function browserLayerAct(tabId,args){
  try{
   if(args.layer==="accessibility"){
    const {nodes}=await cdp(tabId,"Accessibility.getFullAXTree");
-   const matches=nodes.filter(n=>!n.ignored&&n.name?.value===args.name&&n.backendDOMNodeId);
+   const interactiveRoles=['button','link','menuitem','checkbox','radio','tab','textbox','combobox','switch','treeitem','option'];
+   const matches=nodes.filter(n=>!n.ignored&&interactiveRoles.includes(n.role?.value)&&n.name?.value===args.name&&n.backendDOMNodeId);
    if(matches.length!==1)return {notExecuted:true,retrySafe:true,reason:"AX target missing or ambiguous"};
    if(matches[0].properties?.some(p=>p.name==='disabled'&&p.value?.value===true))return {notExecuted:true,retrySafe:false,reason:'AX target disabled'};
    const result=await cdp(tabId,"DOM.getBoxModel",{backendNodeId:matches[0].backendDOMNodeId});box=result.model.content;
@@ -185,6 +186,11 @@ async function browserLayerAct(tabId,args){
  }catch(error){return {notExecuted:true,retrySafe:true,reason:error.message};}
  if(args.action!=="click")return {notExecuted:true,retrySafe:true,reason:"This CDP/AX adapter supports click only"};
  const x=(box[0]+box[4])/2,y=(box[1]+box[5])/2;
+ // DOM mutation can work in a background tab; native CDP input needs its
+ // renderer visible. Activate only the pinned tab, never the current tab.
+ try{const target=await chrome.tabs.update(tabId,{active:true});if(chrome.windows?.update)await chrome.windows.update(target.windowId,{focused:true});}
+ catch(error){return {notExecuted:true,retrySafe:false,reason:'Cannot activate pinned input target: '+error.message};}
+ await cdp(tabId,"Input.dispatchMouseEvent",{type:"mouseMoved",x,y,button:"none"});
  await cdp(tabId,"Input.dispatchMouseEvent",{type:"mousePressed",x,y,button:"left",clickCount:1});
  try{await cdp(tabId,"Input.dispatchMouseEvent",{type:"mouseReleased",x,y,button:"left",clickCount:1});}catch(error){throw new Error("Click outcome unknown: "+error.message);}
  return {executed:true};

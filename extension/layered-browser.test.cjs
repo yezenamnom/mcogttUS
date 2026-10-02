@@ -25,3 +25,17 @@ test('ambiguous and disabled DOM elements cannot fall through to a mouse click',
  assert.equal(result.notExecuted,true);assert.equal(result.retrySafe,false);
  }assert.equal(clicks,0);
 });
+test('AX ignores duplicate static text and activates the pinned renderer before input',async()=>{
+ const events=[];const context={chrome:{tabs:{update:async id=>{events.push('activate:'+id);return {windowId:5}}},windows:{update:async()=>{}}},cdp:async(id,method,args)=>{
+ if(method==='Accessibility.getFullAXTree')return {nodes:[{name:{value:'About'},role:{value:'StaticText'},backendDOMNodeId:1},{name:{value:'About'},role:{value:'link'},backendDOMNodeId:2}]};
+ if(method==='DOM.getBoxModel')return {model:{content:[0,0,20,0,20,20,0,20]}};
+ events.push(args.type);return {};
+ },Error};vm.createContext(context);vm.runInContext(source.slice(source.indexOf('async function browserLayerAct'),source.indexOf('function sleep')),context);
+ const result=await vm.runInContext('browserLayerAct(42,{layer:"accessibility",name:"About",action:"click"})',context);
+ assert.equal(result.executed,true);assert.deepEqual(events,['activate:42','mouseMoved','mousePressed','mouseReleased']);
+});
+test('disabled AX target cannot activate or receive native input',async()=>{
+ let inputs=0;const context={cdp:async()=>({nodes:[{name:{value:'Save'},role:{value:'button'},backendDOMNodeId:2,properties:[{name:'disabled',value:{value:true}}]}]}),chrome:{tabs:{update:async()=>{inputs++}}},Error};vm.createContext(context);vm.runInContext(source.slice(source.indexOf('async function browserLayerAct'),source.indexOf('function sleep')),context);
+ const result=await vm.runInContext('browserLayerAct(42,{layer:"accessibility",name:"Save",action:"click"})',context);
+ assert.equal(result.notExecuted,true);assert.equal(result.retrySafe,false);assert.equal(inputs,0);
+});

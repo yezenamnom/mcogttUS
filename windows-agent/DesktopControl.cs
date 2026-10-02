@@ -12,6 +12,7 @@ internal static partial class Program
     [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr handle);
     [DllImport("user32.dll")] static extern bool IsIconic(IntPtr handle);
     [DllImport("user32.dll")] static extern bool IsZoomed(IntPtr handle);
+    [DllImport("user32.dll")] static extern bool ShowWindowAsync(IntPtr handle,int command);
     [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr handle,out uint pid);
     [DllImport("user32.dll",CharSet=CharSet.Unicode)] static extern int GetWindowText(IntPtr handle,StringBuilder text,int count);
     [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr handle,out WindowRect rect);
@@ -31,9 +32,24 @@ internal static partial class Program
         return SelectedWindow;
     }
     static void RequirePermission(string permission){if(!Config.Permissions.Get(permission))throw new Exception("Permission disabled: "+permission);}
+    static async Task<bool> RestoreWindow(IntPtr handle){
+        ShowWindowAsync(handle,9);
+        for(int attempt=0;attempt<10;attempt++){await Task.Delay(50);if(!IsIconic(handle)&&!IsZoomed(handle))return true;}
+        try{
+            var root=System.Windows.Automation.AutomationElement.FromHandle(handle);
+            if(root.TryGetCurrentPattern(System.Windows.Automation.WindowPattern.Pattern,out var pattern))
+                ((System.Windows.Automation.WindowPattern)pattern).SetWindowVisualState(System.Windows.Automation.WindowVisualState.Normal);
+        }catch{}
+        if(!IsIconic(handle)&&!IsZoomed(handle))return true;
+        // An idempotent restore message is safe to retry on the same exact hwnd.
+        // Some UWP windows ignore ShowWindow across the owner thread.
+        PostMessage(handle,0x0112,new IntPtr(0xF120),IntPtr.Zero);
+        for(int attempt=0;attempt<10;attempt++){await Task.Delay(50);if(!IsIconic(handle)&&!IsZoomed(handle))return true;}
+        return false;
+    }
     static async Task FocusWindow(IntPtr handle){
         RequirePermission("windows");
-        if(IsIconic(handle))ShowWindow(handle,9);
+        if(IsIconic(handle)&&!await RestoreWindow(handle))throw new Exception("Target could not be restored; input was not sent");
         SetForegroundWindow(handle);await Task.Delay(80);
         if(GetForegroundWindow()!=handle){ShowWindow(handle,9);SetForegroundWindow(handle);await Task.Delay(100);}
         if(GetForegroundWindow()!=handle)throw new Exception("Target is not foreground; input was not sent");
@@ -78,7 +94,7 @@ internal static partial class Program
                     case "activate":await FocusWindow(target);verified=true;break;
                     case "minimize":ShowWindow(target,6);await Task.Delay(80);verified=IsIconic(target);break;
                     case "maximize":ShowWindow(target,3);await Task.Delay(80);verified=IsZoomed(target);break;
-                    case "restore":ShowWindow(target,9);await Task.Delay(80);verified=!IsIconic(target)&&!IsZoomed(target);break;
+                    case "restore":verified=await RestoreWindow(target);break;
                     case "close":if(!PostMessage(target,0x0010,IntPtr.Zero,IntPtr.Zero))throw new Exception("Close request rejected");await Task.Delay(150);verified=!IsWindow(target);break;
                     case "type":RequirePermission("keyboard");await FocusWindow(target);foreach(char ch in S(action,"text")){if(GetForegroundWindow()!=target)throw new Exception("Target lost focus; text input stopped");await Type(ch.ToString(),I(action,"intervalMs",0));}break;
                     case "keys":RequirePermission("keyboard");await FocusWindow(target);Combo(action.GetProperty("keys").EnumerateArray().Select(v=>v.GetString()??"").ToArray());break;
