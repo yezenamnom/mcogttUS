@@ -22,7 +22,7 @@ const HOSTINGER_SFTP_DIR = process.env.HOSTINGER_SFTP_DIR || "";
 const HOSTINGER_SCREENSHOT_BASE_URL = (process.env.HOSTINGER_SCREENSHOT_BASE_URL || "").replace(/\/$/, "");
 // ChatGPT treats the resource URI as the component cache key. Keep each
 // published component immutable and bump the URI whenever its HTML changes.
-const LIVE_VIEW_URI = "ui://gpt-us/live-view-v21.html";
+const LIVE_VIEW_URI = "ui://gpt-us/live-view-v22.html";
 const PUBLIC_ORIGIN = (process.env.OAUTH_ISSUER || "https://mcogttus-production.up.railway.app").replace(/\/$/, "");
 const LIVE_WS_ORIGIN = PUBLIC_ORIGIN.replace(/^https:/, "wss:").replace(/^http:/, "ws:");
 const LIVE_VIEW_HTML = readFileSync(new URL("./live-view.html", import.meta.url), "utf8");
@@ -194,7 +194,7 @@ function callDesktop(command, args = {}, timeoutMs = 30000) {
 }
 
 function makeMcpServer() {
-  const server = new McpServer({ name: "gpt-us-browser-desktop", version: "0.7.34" }, { instructions: OPERATING_RULES });
+  const server = new McpServer({ name: "gpt-us-browser-desktop", version: "0.7.35" }, { instructions: OPERATING_RULES });
 
   // Some ChatGPT connector hosts forward the app-qualified tool name back to
   // the MCP server (for example `gpt_us.bridge_info`) instead of stripping the
@@ -318,6 +318,7 @@ function makeMcpServer() {
   server.registerResource("gpt-us-live-view-v18-compat", "ui://gpt-us/live-view-v18.html", liveResourceConfig, liveResource("ui://gpt-us/live-view-v18.html"));
   server.registerResource("gpt-us-live-view-v19-compat", "ui://gpt-us/live-view-v19.html", liveResourceConfig, liveResource("ui://gpt-us/live-view-v19.html"));
   server.registerResource("gpt-us-live-view-v20-compat", "ui://gpt-us/live-view-v20.html", liveResourceConfig, liveResource("ui://gpt-us/live-view-v20.html"));
+  server.registerResource("gpt-us-live-view-v21-compat", "ui://gpt-us/live-view-v21.html", liveResourceConfig, liveResource("ui://gpt-us/live-view-v21.html"));
   server.registerResource("gpt-us-live-view-v17-compat", "ui://gpt-us/live-view-v17.html", liveResourceConfig, liveResource("ui://gpt-us/live-view-v17.html"));
   server.registerResource("gpt-us-live-view-v16-compat", "ui://gpt-us/live-view-v16.html", liveResourceConfig, liveResource("ui://gpt-us/live-view-v16.html"));
   server.registerResource("gpt-us-live-view-v15-compat", "ui://gpt-us/live-view-v15.html", liveResourceConfig, liveResource("ui://gpt-us/live-view-v15.html"));
@@ -408,9 +409,10 @@ function makeMcpServer() {
   }, async ({ url }) => ({ content: [{ type: "text", text: JSON.stringify(await callBrowser("navigate", { url }), null, 2) }] }));
 
   server.registerTool("screenshot", {
-    description: "Capture each Windows monitor separately. Returns a compact image for ChatGPT vision and, when Hostinger SFTP is configured, a shareable temporary URL for each monitor.",
-    inputSchema: z.object({})
-  }, async () => {
+    description: "Capture one Windows monitor for ChatGPT vision. Monitor 1 is screen index 0. By default capture only the requested/first monitor so ChatGPT can inspect it directly. Set allScreens only when the user explicitly asks for every monitor. Temporary share links are opt-in.",
+    inputSchema: z.object({ screen: z.number().int().min(0).max(15).default(0), allScreens: z.boolean().default(false), includeShareLink: z.boolean().default(false) }),
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+  }, async ({ screen, allScreens, includeShareLink }) => {
     const monitors = await callDesktop("desktop_monitors", {}, 30000);
     if (!Array.isArray(monitors) || monitors.length === 0) {
       throw new Error("Desktop agent did not return any monitors");
@@ -418,7 +420,9 @@ function makeMcpServer() {
 
     const content = [];
 
-    for (const monitor of monitors) {
+    const selectedMonitors = allScreens ? monitors : monitors.filter(m => Number(m.index) === screen);
+    if (!selectedMonitors.length) throw new Error(`Monitor ${screen + 1} is unavailable`);
+    for (const monitor of selectedMonitors) {
       const screenIndex = Number(monitor.index);
       if (!Number.isInteger(screenIndex) || screenIndex < 0) continue;
 
@@ -432,15 +436,13 @@ function makeMcpServer() {
         .webp({ quality: 45, effort: 4 })
         .toBuffer();
 
-      const shareCopy = await sharp(source)
-        .resize({ width: 1800, withoutEnlargement: true })
-        .webp({ quality: 68, effort: 4 })
-        .toBuffer();
-
       let shareUrl = null;
       let shareError = null;
-      if (sftpConfigured()) {
+      let shareBytes = 0;
+      if (includeShareLink && sftpConfigured()) {
         try {
+          const shareCopy = await sharp(source).resize({ width: 1800, withoutEnlargement: true }).webp({ quality: 68, effort: 4 }).toBuffer();
+          shareBytes = shareCopy.length;
           shareUrl = await uploadScreenshot(shareCopy, screenIndex + 1);
         } catch (e) {
           shareError = e?.message || String(e);
@@ -458,7 +460,7 @@ function makeMcpServer() {
         sourceWidth: shot.width ?? monitor.width,
         sourceHeight: shot.height ?? monitor.height,
         modelBytes: modelCopy.length,
-        shareBytes: shareCopy.length,
+        shareBytes,
         shareUrl,
         shareError
       };
@@ -715,7 +717,7 @@ const httpServer = http.createServer(async (req, res) => {
     res.end(JSON.stringify({
       ok: true,
       service: "comet-chatgpt-bridge",
-      version: "0.7.34",
+      version: "0.7.35",
       mcp: "ready",
       browserConnected: !!browserSocket && browserSocket.readyState === WebSocket.OPEN,
       browserConnectedAt,
@@ -728,7 +730,7 @@ const httpServer = http.createServer(async (req, res) => {
 
   if (url.pathname === "/" && req.method === "GET") {
     res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({ service: "comet-chatgpt-bridge", version: "0.7.34", status: "ok", mcp: "/mcp" }));
+    res.end(JSON.stringify({ service: "comet-chatgpt-bridge", version: "0.7.35", status: "ok", mcp: "/mcp" }));
     return;
   }
 
@@ -937,7 +939,7 @@ wss.on("connection", (socket, req) => {
 });
 
 httpServer.listen(PORT, "0.0.0.0", () => {
-  console.log(`Comet ChatGPT Bridge v0.7.34 listening on 0.0.0.0:${PORT}`);
+  console.log(`Comet ChatGPT Bridge v0.7.35 listening on 0.0.0.0:${PORT}`);
   console.log("MCP v2 handler ready at /mcp | WSS /browser + /desktop + /capture | health /health");
 });
 
