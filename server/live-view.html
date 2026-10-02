@@ -15,17 +15,14 @@
     button { cursor: pointer; }
     button:hover { background: #334665; }
     .badge { color: #9dc6f5; font-size: 13px; }
-    .screen { display: grid; place-items: center; position: relative; width: min(100%, calc((100vh - 126px) * var(--monitor-aspect, 1.7778))); aspect-ratio: var(--monitor-ratio, 16 / 9); margin-inline: auto; overflow: hidden; border: 1px solid #354763; border-radius: 13px; background: #030711; }
+    .screen { display: grid; place-items: center; position: relative; width: 100%; height: min(67vh, 760px); min-height: 310px; margin-inline: auto; overflow: hidden; border: 1px solid #354763; border-radius: 13px; background: #030711; }
     img, video { display: none; width: 100%; height: 100%; object-fit: contain; }
     .screen.ready.jpeg img, .screen.ready.h264 video, .screen.ready.webm video { display: block; }
     .message { position: absolute; padding: 20px; text-align: center; line-height: 1.6; color: #b6c9e3; }
     .screen.ready .message { display: none; }
     footer { margin-top: 9px; color: #9caec4; font-size: 12px; }
-    body.expanded { padding: 7px 10px; }
-    body.expanded .bar { margin-bottom: 6px; }
-    body.expanded .screen { width: min(100%, calc((100vh - 72px) * var(--monitor-aspect, 1.7778))); }
-    body.expanded footer { display: none; }
-    @media (max-width: 680px) { body { padding: max(8px, env(safe-area-inset-top)) 8px max(8px, env(safe-area-inset-bottom)); } .bar { gap: 6px; } h1 { width: 100%; margin: 0; } select { max-width: 100%; flex: 1 1 210px; } select, button { padding: 7px 9px; } .screen { width: 100%; max-height: calc(100dvh - 150px); } }
+    body.expanded .screen { height: min(78vh, 900px); }
+    @media (max-width: 680px) { body { padding: max(8px, env(safe-area-inset-top)) 8px max(8px, env(safe-area-inset-bottom)); } .bar { gap: 6px; } h1 { width: 100%; margin: 0; } select { max-width: 100%; flex: 1 1 210px; } select, button { padding: 7px 9px; } .screen { height: 58dvh; min-height: 260px; } body.expanded .screen { height: 72dvh; } }
   </style>
 </head>
 <body>
@@ -33,7 +30,7 @@
     <h1>الكمبيوتر المباشر</h1>
     <label for="monitor">الشاشة</label><select id="monitor" aria-label="اختر الشاشة"></select>
     <button id="toggle" type="button">إيقاف مؤقت</button>
-    <button id="expand" type="button">تكبير الشاشة مع الشات</button>
+    <button id="expand" type="button">تكبير داخل المحادثة</button>
     <button id="audio" type="button" hidden>تشغيل الصوت</button>
     <span class="badge" id="status" role="status">جارٍ الاتصال…</span>
   </div>
@@ -68,7 +65,7 @@
       const toggle = document.getElementById('toggle');
       const audioButton = document.getElementById('audio');
       const expandButton = document.getElementById('expand');
-      let expandedMode = window.openai?.displayMode === 'fullscreen';
+      let expandedMode = false;
       function playAudio(arrayBuffer, info) {
         if (!audioEnabled || !audioContext || !info?.sampleRate || !info?.channels) return;
         const bytesPerSample = Math.max(2, Number(info.bits || 32) / 8);
@@ -265,21 +262,12 @@
       });
       const paintExpandedMode = () => {
         if (expandedMode) document.body.classList.add('expanded'); else document.body.classList.remove('expanded');
-        expandButton.textContent = expandedMode ? 'العودة للحجم العادي' : 'تكبير الشاشة مع الشات';
+        expandButton.textContent = expandedMode ? 'الحجم العادي' : 'تكبير داخل المحادثة';
+        window.openai?.notifyIntrinsicHeight?.(document.documentElement.scrollHeight);
       };
       paintExpandedMode();
-      expandButton.addEventListener('click', async () => {
-        const nextMode = expandedMode ? 'inline' : 'fullscreen';
-        try {
-          if (window.openai?.requestDisplayMode) {
-            const result = await window.openai.requestDisplayMode({ mode: nextMode });
-            expandedMode = (result?.mode || nextMode) === 'fullscreen';
-          } else {
-            expandedMode = !expandedMode;
-          }
-        } catch {
-          expandedMode = !expandedMode;
-        }
+      expandButton.addEventListener('click', () => {
+        expandedMode = !expandedMode;
         paintExpandedMode();
       });
       audioButton.addEventListener('click', async () => {
