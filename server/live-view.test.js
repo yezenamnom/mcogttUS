@@ -62,8 +62,8 @@ test("private live-view resource, auth, monitor selection and frame delivery", a
     assert.deepEqual(tools.find(t => t.name === "live_view_state")._meta.ui.visibility, ["app"]);
     assert.equal(tools.find(t => t.name === "open_smart_panel")._meta.ui.resourceUri, "ui://gpt-us/smart-actions.html");
     assert.deepEqual(tools.find(t => t.name === "smart_action_state")._meta.ui.visibility, ["app"]);
-    assert.equal(tools.find(t => t.name === "desktop_observe")._meta.ui.resourceUri, "ui://gpt-us/desktop-vision-v1.html");
-    const visionResource = await rpc(32, "resources/read", { uri: "ui://gpt-us/desktop-vision-v1.html" });
+    assert.equal(tools.find(t => t.name === "desktop_observe")._meta.ui.resourceUri, "ui://gpt-us/desktop-vision-v2.html");
+    const visionResource = await rpc(32, "resources/read", { uri: "ui://gpt-us/desktop-vision-v2.html" });
     assert.match(visionResource.result.contents[0].text, /setWidgetState/);
     assert.match(visionResource.result.contents[0].text, /imageIds/);
     const smartResource = await rpc(30, "resources/read", { uri: "ui://gpt-us/smart-actions.html" });
