@@ -55,8 +55,8 @@ test("private live-view resource, auth, monitor selection and frame delivery", a
     const initialized = await rpc(1, "initialize", { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "live-view-test", version: "1" } });
     assert.match(initialized.result.instructions, /نفّذ أولًا، ثم تحقق/);
     const tools = (await rpc(2, "tools/list", {})).result.tools;
-    assert.equal(tools.find(t => t.name === "open_live_view")._meta.ui.resourceUri, "ui://gpt-us/live-view-v18.html");
-    assert.equal(tools.find(t => t.name === "open_live_view")._meta["openai/outputTemplate"], "ui://gpt-us/live-view-v18.html");
+    assert.equal(tools.find(t => t.name === "open_live_view")._meta.ui.resourceUri, "ui://gpt-us/live-view-v19.html");
+    assert.equal(tools.find(t => t.name === "open_live_view")._meta["openai/outputTemplate"], "ui://gpt-us/live-view-v19.html");
     assert.equal(tools.find(t => t.name === "open_live_view")._meta["openai/widgetAccessible"], true);
     assert.deepEqual(tools.find(t => t.name === "live_view_frame")._meta.ui.visibility, ["app"]);
     assert.deepEqual(tools.find(t => t.name === "live_view_state")._meta.ui.visibility, ["app"]);
@@ -66,12 +66,12 @@ test("private live-view resource, auth, monitor selection and frame delivery", a
     assert.match(smartResource.result.contents[0].text, /الخطوة التالية/);
     const smartOpened = await rpc(31, "tools/call", { name: "open_smart_panel", arguments: { task: "غيّر الصوت" } });
     assert.equal(smartOpened.result.structuredContent.phase, "idle");
-    const resource = await rpc(3, "resources/read", { uri: "ui://gpt-us/live-view-v18.html" });
+    const resource = await rpc(3, "resources/read", { uri: "ui://gpt-us/live-view-v19.html" });
     assert.match(resource.result.contents[0].text, /الكمبيوتر المباشر/);
     assert.match(resource.result.contents[0].text, /const embeddedState = null/);
     assert.equal(resource.result.contents[0].mimeType, "text/html;profile=mcp-app");
     assert.equal(resource.result.contents[0]._meta["openai/ui"].preferredDisplayMode, "inline");
-    assert.deepEqual(resource.result.contents[0]._meta.ui.csp, { connectDomains: ["wss://mcogttus-production.up.railway.app"], resourceDomains: [] });
+    assert.deepEqual(resource.result.contents[0]._meta.ui.csp, { connectDomains: ["https://mcogttus-production.up.railway.app"], resourceDomains: [] });
     const opened = await rpc(4, "tools/call", { name: "open_live_view", arguments: {} });
     const bootstrap = opened.result.structuredContent;
     assert.match(bootstrap.streamUrl, /^wss:\/\/mcogttus-production\.up\.railway\.app\/live\?ticket=/);
