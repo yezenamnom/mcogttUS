@@ -27,7 +27,9 @@ test('owner OAuth: discovery, manual consent, PKCE, replay, expiry and restart',
   assert.equal(page.headers.get('referrer-policy'),'same-origin');
   assert.ok(page.headers.get('content-security-policy').includes("form-action 'self' "+redirect+';'));
   const cookie=page.headers.get('set-cookie').split(';')[0];
-  const request=(await page.text()).match(/name="request" value="([^"]+)"/)[1];
+  const approvalHtml=await page.text();
+  assert.ok(approvalHtml.includes('لمدة 30 يوماً'));
+  const request=approvalHtml.match(/name="request" value="([^"]+)"/)[1];
   assert.equal((await call('/oauth/approve',{request,decision:'allow',owner_token:secret},{origin:'null',cookie})).status,400);
   assert.equal((await call('/oauth/approve',{request,decision:'allow',owner_token:secret},{origin:'https://evil.example',cookie})).status,400);
   assert.equal((await call('/oauth/approve',{request,decision:'allow',owner_token:secret},{origin:issuer})).status,400);
@@ -40,13 +42,14 @@ test('owner OAuth: discovery, manual consent, PKCE, replay, expiry and restart',
   const exchange={grant_type:'authorization_code',code:callback.searchParams.get('code'),client_id:client.client_id,redirect_uri:redirect,resource:issuer+'/mcp',code_verifier:verifier};
   const token=await (await call('/oauth/token',exchange)).json();
   assert.equal(token.token_type,'Bearer');
+  assert.equal(token.expires_in,30*24*60*60);
   assert.ok(token.refresh_token);
   assert.ok(oauth.accepts('Bearer '+token.access_token));
   assert.equal((await call('/oauth/token',exchange)).status,400);
   assert.equal(oauth.accepts('Bearer '+token.access_token+'tampered'),false);
   assert.equal(createOwnerOAuth({secret,issuer:issuer+'/other'}).accepts('Bearer '+token.access_token),false);
   clock+=3600001;
-  assert.equal(oauth.accepts('Bearer '+token.access_token),false);
+  assert.equal(oauth.accepts('Bearer '+token.access_token),true);
   assert.equal((await call('/oauth/token',{grant_type:'refresh_token',refresh_token:token.refresh_token,client_id:'wrong',resource:issuer+'/mcp'})).status,400);
   oauth=createOwnerOAuth({secret,issuer,now:()=>clock});
   const renewed=await (await call('/oauth/token',{grant_type:'refresh_token',refresh_token:token.refresh_token,client_id:client.client_id,resource:issuer+'/mcp'})).json();
@@ -56,3 +59,4 @@ test('owner OAuth: discovery, manual consent, PKCE, replay, expiry and restart',
   assert.ok(oauth.accepts('Bearer '+secret));
  }finally{await new Promise(resolve=>server.close(resolve));}
 });
+
