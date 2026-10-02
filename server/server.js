@@ -29,7 +29,7 @@ const LIVE_VIEW_HTML = readFileSync(new URL("./live-view.html", import.meta.url)
 const OPERATING_RULES = readFileSync(new URL("./OPERATING_RULES_AR.md", import.meta.url), "utf8");
 const SMART_URI = "ui://gpt-us/smart-actions.html";
 const SMART_HTML = readFileSync(new URL("./smart-actions.html", import.meta.url), "utf8");
-const VISION_URI = "ui://gpt-us/desktop-vision-v1.html";
+const VISION_URI = "ui://gpt-us/desktop-vision-v2.html";
 const VISION_HTML = readFileSync(new URL("./desktop-vision.html", import.meta.url), "utf8");
 let smartState = { revision: 0, phase: "idle", options: [], title: "الكمبيوتر" };
 let smartTask = "";
@@ -666,7 +666,7 @@ function makeMcpServer() {
     // Keep vision observations in MCP content, not a competing JSON-only
     // structured result. Metadata remains available as the text content block.
     const hasImage=changed||!onlyIfChanged;
-    return {content,_meta:hasImage?{snapshot:{screen,mimeType:shot.mimeType,data:shot.buffer.toString("base64")}}:{}};
+    return {content,_meta:hasImage?{snapshot:{id:`${screen}:${metadata.at}`,screen,mimeType:shot.mimeType,data:shot.buffer.toString("base64")}}:{}};
   });
   server.registerTool("desktop_mouse_action",{
     description:"One real Windows mouse operation. Coordinates are physical screen pixels including negative monitor origins. For a final click set screenshotAfter=true, inspect that returned image, and only then claim success. Never infer success merely because the click was sent. After verified success answer only 'تم' unless the user requested explanation or a report.",
