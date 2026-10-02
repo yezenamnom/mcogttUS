@@ -84,8 +84,8 @@ async function getFastDesktopFrame(screen, width = 1280, quality = 58, timeout =
     const shot = await callDesktop("desktop_screenshot", { screen }, timeout);
     if (!shot?.data || shot.mimeType !== "image/png" || Number(shot.screen) !== screen) throw fastError;
     const { data, info } = await sharp(Buffer.from(shot.data, "base64")).resize({ width, withoutEnlargement: true })
-      .webp({ quality, effort: 1 }).toBuffer({ resolveWithObject: true });
-    return { ...shot, mimeType: "image/webp", width: info.width, height: info.height, buffer: data, fallback: true };
+      .jpeg({ quality, chromaSubsampling: "4:2:0" }).toBuffer({ resolveWithObject: true });
+    return { ...shot, mimeType: "image/jpeg", width: info.width, height: info.height, buffer: data, fallback: true };
   }
 }
 
@@ -194,7 +194,7 @@ function callDesktop(command, args = {}, timeoutMs = 30000) {
 }
 
 function makeMcpServer() {
-  const server = new McpServer({ name: "gpt-us-browser-desktop", version: "0.7.35" }, { instructions: OPERATING_RULES });
+  const server = new McpServer({ name: "gpt-us-browser-desktop", version: "0.7.36" }, { instructions: OPERATING_RULES });
 
   // Some ChatGPT connector hosts forward the app-qualified tool name back to
   // the MCP server (for example `gpt_us.bridge_info`) instead of stripping the
@@ -432,8 +432,8 @@ function makeMcpServer() {
       const source = Buffer.from(String(shot.data), "base64");
 
       const modelCopy = await sharp(source)
-        .resize({ width: 1100, withoutEnlargement: true })
-        .webp({ quality: 45, effort: 4 })
+        .resize({ width: 1440, withoutEnlargement: true })
+        .jpeg({ quality: 72, chromaSubsampling: "4:2:0" })
         .toBuffer();
 
       let shareUrl = null;
@@ -469,7 +469,7 @@ function makeMcpServer() {
       content.push({
         type: "image",
         data: modelCopy.toString("base64"),
-        mimeType: "image/webp"
+        mimeType: "image/jpeg"
       });
 
       if (shareUrl) {
@@ -717,7 +717,7 @@ const httpServer = http.createServer(async (req, res) => {
     res.end(JSON.stringify({
       ok: true,
       service: "comet-chatgpt-bridge",
-      version: "0.7.35",
+      version: "0.7.36",
       mcp: "ready",
       browserConnected: !!browserSocket && browserSocket.readyState === WebSocket.OPEN,
       browserConnectedAt,
@@ -730,7 +730,7 @@ const httpServer = http.createServer(async (req, res) => {
 
   if (url.pathname === "/" && req.method === "GET") {
     res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({ service: "comet-chatgpt-bridge", version: "0.7.35", status: "ok", mcp: "/mcp" }));
+    res.end(JSON.stringify({ service: "comet-chatgpt-bridge", version: "0.7.36", status: "ok", mcp: "/mcp" }));
     return;
   }
 
@@ -939,7 +939,7 @@ wss.on("connection", (socket, req) => {
 });
 
 httpServer.listen(PORT, "0.0.0.0", () => {
-  console.log(`Comet ChatGPT Bridge v0.7.35 listening on 0.0.0.0:${PORT}`);
+  console.log(`Comet ChatGPT Bridge v0.7.36 listening on 0.0.0.0:${PORT}`);
   console.log("MCP v2 handler ready at /mcp | WSS /browser + /desktop + /capture | health /health");
 });
 
