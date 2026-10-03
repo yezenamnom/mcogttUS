@@ -1,3 +1,4 @@
+import {guidedTour} from './guided-tour.js';
 import {splitTabs} from './native-split.js';
 import {CONTROL_MODES,DEFAULT_SHORTCUTS,validateShortcuts,assertControlMode} from './control-mode.js';
 import {TargetManager,agentIndicator} from './target-manager.js';
@@ -797,7 +798,14 @@ async function executeCommand(command,args={}){
  try{const result=await executeCommandCore(command,args);await indicate(result?.notExecuted||result?.ok===false?'ERROR':result?.verified===true?'SUCCESS':read?'OBSERVING':'WAITING');return result;}
  catch(error){await indicate('ERROR');throw error;}
 }
+function tourSnapshot(){return {url:location.href,title:document.title,text:(document.body?.innerText||'').slice(0,14000),headings:[...document.querySelectorAll('h1,h2,h3')].map(n=>n.textContent.trim()).slice(0,30),links:[...document.querySelectorAll('nav a[href],header a[href],main a[href]')].map(a=>({url:a.href,text:a.innerText.trim()})).slice(0,120),scrollY};}
 async function executeCommandCore(command,args={}){
+ if(command==='browser_guided_tour'){
+  assertControlMode((await controlPreferences()).mode,'browser','scroll',{});
+  const tab=await targetManager.resolve(args.targetId);const observe=async()=>{const current=await chrome.tabs.get(tab.id);if(current.status==='loading'){for(let i=0;i<40;i++){await sleep(200);if((await chrome.tabs.get(tab.id)).status==='complete')break;}}return runInTab(tab.id,tourSnapshot);};
+  return guidedTour({maxPages:args.maxPages??3,observe,navigate:async url=>{await chrome.tabs.update(tab.id,{url});await sleep(200);},scroll:()=>executeCommand('scroll',{targetId:args.targetId,y:Math.round(700),behavior:'instant'}),save:state=>chrome.storage.local.set({guidedTourState:{...state,targetId:args.targetId}})});
+ }
+ if(command==='browser_guided_tour_status')return (await chrome.storage.local.get('guidedTourState')).guidedTourState||{status:'none'};
   if(command==="browser_split_capabilities")return {createSplit:typeof chrome.tabs.createSplit==="function",unsplit:typeof chrome.tabs.unsplit==="function",splitMethods:Object.keys(chrome.tabs).filter(k=>/split/i.test(k)),userAgent:navigator.userAgent};
   if(command==="browser_control_mode_get")return controlPreferences();
   if(command==="browser_control_mode_set")return setControlPreferences(args);

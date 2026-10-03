@@ -209,7 +209,7 @@ function callDesktop(command, args = {}, timeoutMs = 30000) {
 }
 
 function makeMcpServer() {
-  const server = new McpServer({ name: "gpt-us-browser-desktop", version: "0.9.2" }, { instructions: instructionStore.get().text });
+  const server = new McpServer({ name: "gpt-us-browser-desktop", version: "0.9.3" }, { instructions: instructionStore.get().text });
 
   // Some ChatGPT connector hosts forward the app-qualified tool name back to
   // the MCP server (for example `gpt_us.bridge_info`) instead of stripping the
@@ -614,6 +614,8 @@ function makeMcpServer() {
   const textResult = async (command,args={},timeout=20000) => ({ content:[{type:"text",text:JSON.stringify(await callBrowser(command,args,timeout),null,2)}] });
   server.registerTool('browser_control_mode_get',{description:'Read the user-selected control mode: desktop Windows mouse, Comet browser mouse, or programmatic DOM/CDP without the extension cursor. Honor this selection; never switch domains as a fallback.',inputSchema:z.object({})},async()=>textResult('browser_control_mode_get',{}));
   server.registerTool('browser_control_mode_set',{description:'Change the persistent control mode ONLY when the user explicitly asks. UI-selected mode must not be changed just to bypass a failed tool.',inputSchema:z.object({mode:z.enum(['desktop','comet','programmatic','auto'])})},async args=>textResult('browser_control_mode_set',args));
+  server.registerTool('browser_guided_tour',{description:'Execute an explicitly requested site tour on an exact targetId: read homepage, scroll, and visit up to two clearly informational same-origin pages. Returns observed content and persisted completion or blocker. Do not ask what the user wants from the site when they already asked for a general tour. No forms or purchases.',inputSchema:z.object({targetId:z.string(),maxPages:z.number().int().min(1).max(3).default(3)})},async args=>textResult('browser_guided_tour',args,60000));
+  server.registerTool('browser_guided_tour_status',{description:'Read persisted site-tour progress and actual remaining blocker. Read-only; no action replay.',inputSchema:z.object({})},async()=>textResult('browser_guided_tour_status',{}));
   server.registerTool('browser_use_open',{description:'Open a user-requested ChatGPT Use tab with local GPT US customization. Preserves ChatGPT account and subscription; does not send a message.',inputSchema:z.object({})},async()=>textResult('browser_use_open',{}));
   server.registerTool('browser_workspace_open_urls',{description:'Open 1–8 explicitly requested HTTP(S) URLs in browser tabs. Returns exact tabIds; pin them using browser_target_add after loading.',inputSchema:z.object({urls:z.array(z.string().url()).min(1).max(8)})},async args=>textResult('browser_workspace_open_urls',args));
   server.registerTool('browser_workspace_context',{description:'Prepare a draft question referencing selected targetIds. Does not send a ChatGPT message.',inputSchema:z.object({targetIds:z.array(z.string()).min(1).max(8),question:z.string().max(2000).optional()})},async args=>textResult('browser_workspace_context',args));
@@ -900,7 +902,7 @@ const httpServer = http.createServer(async (req, res) => {
     res.end(JSON.stringify({
       ok: true,
       service: "comet-chatgpt-bridge",
-      version: "0.9.2",
+      version: "0.9.3",
       mcp: "ready",
       browserConnected: !!browserSocket && browserSocket.readyState === WebSocket.OPEN,
       browserConnectedAt,
@@ -913,7 +915,7 @@ const httpServer = http.createServer(async (req, res) => {
 
   if (url.pathname === "/" && req.method === "GET") {
     res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({ service: "comet-chatgpt-bridge", version: "0.9.2", status: "ok", mcp: "/mcp" }));
+    res.end(JSON.stringify({ service: "comet-chatgpt-bridge", version: "0.9.3", status: "ok", mcp: "/mcp" }));
     return;
   }
 
@@ -1188,7 +1190,7 @@ wss.on("connection", (socket, req) => {
 });
 
 httpServer.listen(PORT, "0.0.0.0", () => {
-  console.log(`Comet ChatGPT Bridge v0.9.2 listening on 0.0.0.0:${PORT}`);
+  console.log(`Comet ChatGPT Bridge v0.9.3 listening on 0.0.0.0:${PORT}`);
   console.log("MCP v2 handler ready at /mcp | WSS /browser + /desktop + /capture | health /health");
 });
 
