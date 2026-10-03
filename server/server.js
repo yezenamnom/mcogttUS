@@ -1,3 +1,4 @@
+import {CONTROL_MODES,assertControlMode} from './control-mode.js';
 import http from "node:http";
 import { imageResult } from "./image-results.js";
 import { Workflows } from "./workflows.js";
@@ -49,6 +50,7 @@ function smartObserve(page = null, windows = []) {
 if (!BRIDGE_TOKEN) console.warn("WARNING: BRIDGE_TOKEN is not set.");
 
 let browserSocket = null;
+let selectedControlMode="auto";
 let browserConnectedAt = null;
 let captureSocket = null;
 let browserCaptureState = { active: false };
@@ -175,6 +177,7 @@ async function uploadScreenshot(buffer, monitorNumber) {
 }
 
 function callBrowser(command, args = {}, timeoutMs = 20000) {
+  assertControlMode(selectedControlMode,"browser",command,args);
   if (!browserSocket || browserSocket.readyState !== WebSocket.OPEN) {
     throw new Error("Comet extension is not connected to the Railway bridge.");
   }
@@ -190,6 +193,7 @@ function callBrowser(command, args = {}, timeoutMs = 20000) {
 }
 
 function callDesktop(command, args = {}, timeoutMs = 30000) {
+  assertControlMode(selectedControlMode,"desktop",command,args);
   if (!desktopSocket || desktopSocket.readyState !== WebSocket.OPEN) {
     throw new Error("Windows desktop agent is not connected to the Railway bridge.");
   }
@@ -205,7 +209,7 @@ function callDesktop(command, args = {}, timeoutMs = 30000) {
 }
 
 function makeMcpServer() {
-  const server = new McpServer({ name: "gpt-us-browser-desktop", version: "0.9.1" }, { instructions: instructionStore.get().text });
+  const server = new McpServer({ name: "gpt-us-browser-desktop", version: "0.9.2" }, { instructions: instructionStore.get().text });
 
   // Some ChatGPT connector hosts forward the app-qualified tool name back to
   // the MCP server (for example `gpt_us.bridge_info`) instead of stripping the
@@ -608,6 +612,8 @@ function makeMcpServer() {
 
   const optTabId = z.number().int().optional();
   const textResult = async (command,args={},timeout=20000) => ({ content:[{type:"text",text:JSON.stringify(await callBrowser(command,args,timeout),null,2)}] });
+  server.registerTool('browser_control_mode_get',{description:'Read the user-selected control mode: desktop Windows mouse, Comet browser mouse, or programmatic DOM/CDP without the extension cursor. Honor this selection; never switch domains as a fallback.',inputSchema:z.object({})},async()=>textResult('browser_control_mode_get',{}));
+  server.registerTool('browser_control_mode_set',{description:'Change the persistent control mode ONLY when the user explicitly asks. UI-selected mode must not be changed just to bypass a failed tool.',inputSchema:z.object({mode:z.enum(['desktop','comet','programmatic','auto'])})},async args=>textResult('browser_control_mode_set',args));
   server.registerTool('browser_use_open',{description:'Open a user-requested ChatGPT Use tab with local GPT US customization. Preserves ChatGPT account and subscription; does not send a message.',inputSchema:z.object({})},async()=>textResult('browser_use_open',{}));
   server.registerTool('browser_workspace_open_urls',{description:'Open 1–8 explicitly requested HTTP(S) URLs in browser tabs. Returns exact tabIds; pin them using browser_target_add after loading.',inputSchema:z.object({urls:z.array(z.string().url()).min(1).max(8)})},async args=>textResult('browser_workspace_open_urls',args));
   server.registerTool('browser_workspace_context',{description:'Prepare a draft question referencing selected targetIds. Does not send a ChatGPT message.',inputSchema:z.object({targetIds:z.array(z.string()).min(1).max(8),question:z.string().max(2000).optional()})},async args=>textResult('browser_workspace_context',args));
@@ -894,7 +900,7 @@ const httpServer = http.createServer(async (req, res) => {
     res.end(JSON.stringify({
       ok: true,
       service: "comet-chatgpt-bridge",
-      version: "0.9.1",
+      version: "0.9.2",
       mcp: "ready",
       browserConnected: !!browserSocket && browserSocket.readyState === WebSocket.OPEN,
       browserConnectedAt,
@@ -907,7 +913,7 @@ const httpServer = http.createServer(async (req, res) => {
 
   if (url.pathname === "/" && req.method === "GET") {
     res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({ service: "comet-chatgpt-bridge", version: "0.9.1", status: "ok", mcp: "/mcp" }));
+    res.end(JSON.stringify({ service: "comet-chatgpt-bridge", version: "0.9.2", status: "ok", mcp: "/mcp" }));
     return;
   }
 
@@ -1153,6 +1159,7 @@ wss.on("connection", (socket, req) => {
       if(browserSocket?.readyState===WebSocket.OPEN)browserSocket.send(JSON.stringify({type:'activity_effects',enabled:msg.enabled}));
       return;
     }
+    if(!isDesktop&&browserSocket===socket&&msg.type==="control_mode"&&CONTROL_MODES.includes(msg.mode)){selectedControlMode=msg.mode;return;}
     if (msg.type === "ping") {
       socket.send(JSON.stringify({ type: "pong", at: Date.now() }));
       return;
@@ -1181,7 +1188,7 @@ wss.on("connection", (socket, req) => {
 });
 
 httpServer.listen(PORT, "0.0.0.0", () => {
-  console.log(`Comet ChatGPT Bridge v0.9.1 listening on 0.0.0.0:${PORT}`);
+  console.log(`Comet ChatGPT Bridge v0.9.2 listening on 0.0.0.0:${PORT}`);
   console.log("MCP v2 handler ready at /mcp | WSS /browser + /desktop + /capture | health /health");
 });
 

@@ -1,3 +1,4 @@
+import {CONTROL_MODES,DEFAULT_SHORTCUTS,validateShortcuts,assertControlMode} from './control-mode.js';
 import {TargetManager,agentIndicator} from './target-manager.js';
 import {siteSuggestions,safeUrls,contextPrompt,arrangeTargets} from './use-workspace.js';
 let ws = null;
@@ -52,7 +53,7 @@ chrome.runtime.onMessage.addListener(message => {
 });
 chrome.runtime.onMessage.addListener((message,sender,respond)=>{
  if(message?.type==='use_workspace'&&sender.id===chrome.runtime.id&&(sender.url?.startsWith(chrome.runtime.getURL(''))||/^https:\/\/chatgpt\.com\//.test(sender.url||''))){
-  const allowed=['use_state','use_prompt','use_disable'];
+  const allowed=['use_state','use_prompt','use_disable','use_control_get','use_control_set'];
   if(sender.url?.startsWith(chrome.runtime.getURL('')))allowed.push('use_open','use_open_urls','use_arrange','use_capture');
   if(!allowed.includes(message.command))return;
   useWorkspace(message.command,message.args||{}).then(result=>respond({ok:true,result}),error=>respond({ok:false,error:error.message}));return true;
@@ -61,7 +62,11 @@ chrome.runtime.onMessage.addListener((message,sender,respond)=>{
  if(!['browser_targets_list','browser_targets_clear','browser_target_add','browser_target_add_by_url','browser_target_remove','browser_target_focus'].includes(message.command))return;
  executeCommand(message.command,message.args||{}).then(result=>respond({ok:true,result}),error=>respond({ok:false,error:error.message}));return true;
 });
+async function controlPreferences(){const value=(await chrome.storage.local.get('controlPreferences')).controlPreferences;return {mode:CONTROL_MODES.includes(value?.mode)?value.mode:'auto',shortcuts:value?.shortcuts||DEFAULT_SHORTCUTS,connected:ws?.readyState===WebSocket.OPEN};}
+async function setControlPreferences(args){const previous=await controlPreferences();if(args.mode!==undefined&&!CONTROL_MODES.includes(args.mode))throw Error('Invalid control mode');const next={mode:args.mode??previous.mode,shortcuts:args.shortcuts===undefined?previous.shortcuts:validateShortcuts(args.shortcuts)};await chrome.storage.local.set({controlPreferences:next});if(next.mode==='programmatic'){const tabs=await chrome.tabs.query({});await Promise.allSettled(tabs.filter(t=>/^https?:/.test(t.url||'')).map(t=>chrome.scripting.executeScript({target:{tabId:t.id},func:()=>{for(const id of ['__cgb_cursor_host','__gptus_blue_agent','__gptus_activity_wave'])document.getElementById(id)?.style.setProperty('display','none','important');}})));}if(ws?.readyState===WebSocket.OPEN)ws.send(JSON.stringify({type:'control_mode',mode:next.mode}));return {...next,connected:ws?.readyState===WebSocket.OPEN};}
 async function useWorkspace(command,args={}){
+ if(command==='use_control_get')return controlPreferences();
+ if(command==='use_control_set')return setControlPreferences(args);
  if(command==='use_state'){const targets=await targetManager.list();return {targets,suggestions:targets.filter(t=>t.status==='CONNECTED').map(t=>({targetId:t.targetId,title:t.title,items:siteSuggestions(t.url)}))};}
  if(command==='use_disable'){await chrome.storage.local.set({useEnabled:false});return {disabled:true};}
  if(command==='use_open'){
@@ -77,7 +82,7 @@ async function useWorkspace(command,args={}){
  if(command==='use_arrange'){const tabs=await Promise.all(ids.map(id=>targetManager.resolve(id)));return arrangeTargets(chrome,tabs,args.mode);}
  throw Error('Unknown Use command');
 }
-async function injectUse(tabId,url){if(!/^https:\/\/chatgpt\.com\//.test(url||''))return;const {useEnabled}=await chrome.storage.local.get('useEnabled');if(useEnabled)await chrome.scripting.executeScript({target:{tabId},files:['use-skin.js']}).catch(()=>{});}
+async function injectUse(tabId,url){if(!/^https:\/\/chatgpt\.com\//.test(url||''))return;const {useEnabled}=await chrome.storage.local.get('useEnabled');if(useEnabled)await chrome.scripting.executeScript({target:{tabId},files:['use-skin.js','use-controls.js']}).catch(()=>{});}
 chrome.tabs.onUpdated.addListener((tabId,change,tab)=>{if(change.status==='complete')void injectUse(tabId,tab.url);});
 
 function getNetworkState(tabId){
@@ -111,6 +116,7 @@ async function connect() {
   ws = new WebSocket(`${wsBase}/browser?token=${encodeURIComponent(bridgeToken)}`);
 
   ws.onopen = () => {
+    void controlPreferences().then(p=>ws?.readyState===WebSocket.OPEN&&ws.send(JSON.stringify({type:"control_mode",mode:p.mode})));
     reconnectAttempt = 0;
     chrome.action.setBadgeText({ text: "ON" });
     chrome.action.setBadgeBackgroundColor({ color: "#2e7d32" });
@@ -665,8 +671,8 @@ async function mouseAction(kind,x,y,button="left"){
 
 const nativeButtons = new Map();
 async function getCursorVisualConfig(){
-  const cfg=await chrome.storage.local.get(["cursorSize","cursorSpeed","cursorColor","clickColor","cursorEnabled","clickEffect"]);
-  return {enabled:cfg.cursorEnabled!==false,clickEffect:cfg.clickEffect!==false,size:Number(cfg.cursorSize||30),speed:Number(cfg.cursorSpeed||180),color:cfg.cursorColor||"#27e9f5",clickColor:cfg.clickColor||"#27e9f5"};
+  const cfg=await chrome.storage.local.get(["cursorSize","cursorSpeed","cursorColor","clickColor","cursorEnabled","clickEffect","controlPreferences"]);
+  return {enabled:cfg.cursorEnabled!==false&&cfg.controlPreferences?.mode!=="programmatic",clickEffect:cfg.clickEffect!==false&&cfg.controlPreferences?.mode!=="programmatic",size:Number(cfg.cursorSize||30),speed:Number(cfg.cursorSpeed||180),color:cfg.cursorColor||"#27e9f5",clickColor:cfg.clickColor||"#27e9f5"};
 }
 async function showNativeCursor(tabId,x,y,click){
   const cfg=await getCursorVisualConfig();
@@ -732,7 +738,7 @@ async function nativeMousePath(tabId, points, options={}) {
     nativeButtons.set(tabId,press&&!release&&finished?buttons:0);
   }
   const end=pts[pts.length-1];
-  await runInTab(tabId,visualCursor,[end.x,end.y,false]).catch(()=>{});
+  await showNativeCursor(tabId,end.x,end.y,false).catch(()=>{});
   return {ok:true,points:pts.length,durationMs:duration,pressed:press,released:release};
 }
 
@@ -766,6 +772,9 @@ function hoverTarget(selector,text) { let el=selector?document.querySelector(sel
 function selectTarget(selector,value) { const el=document.querySelector(selector); if(!el||el.tagName!=="SELECT") throw new Error("Select element not found"); el.value=value; el.dispatchEvent(new Event("change",{bubbles:true})); return {selected:true,value:el.value}; }
 
 async function executeCommand(command,args={}){
+  if(command==="browser_control_mode_get")return controlPreferences();
+  if(command==="browser_control_mode_set")return setControlPreferences(args);
+  assertControlMode((await controlPreferences()).mode,"browser",command,args);
   if(command==='browser_use_open')return useWorkspace('use_open');
   if(command==='browser_workspace_open_urls')return useWorkspace('use_open_urls',args);
   if(command==='browser_workspace_context')return useWorkspace('use_prompt',args);
@@ -784,7 +793,7 @@ async function executeCommand(command,args={}){
     const allowed=['get_page','get_viewport','element_map','dom_watch','dom_diff','accessibility_tree','layer_observe','layer_act','scroll','click','type','select','navigate','zoom'];
     if(!allowed.includes(args.command))throw Error('Target command not allowed');
     const tab=await targetManager.resolve(args.targetId),settings=await chrome.storage.local.get(['blueAgentEffectsEnabled']);
-    const indicate=async state=>{if(settings.blueAgentEffectsEnabled===false)return;await chrome.scripting.executeScript({target:{tabId:tab.id},func:agentIndicator,args:[state]}).catch(()=>{});};
+    const indicate=async state=>{if(settings.blueAgentEffectsEnabled===false||(await controlPreferences()).mode==='programmatic')return;await chrome.scripting.executeScript({target:{tabId:tab.id},func:agentIndicator,args:[state]}).catch(()=>{});};
     await indicate(['get_page','get_viewport','element_map','dom_watch','dom_diff','accessibility_tree','layer_observe'].includes(args.command)?'OBSERVING':'ACTING');
     try{const result=await executeCommand(args.command,{...(args.args||{}),targetId:args.targetId,tabId:tab.id});await indicate(['get_page','get_viewport','element_map','dom_watch','dom_diff','accessibility_tree','layer_observe'].includes(args.command)?'SUCCESS':'WAITING');return {targetId:args.targetId,tabId:tab.id,executed:true,verified:false,result};}
     catch(error){await indicate('ERROR');throw error;}

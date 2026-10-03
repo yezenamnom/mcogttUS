@@ -26,8 +26,8 @@
   function update(){effectsEnabled=localEnabled&&desktopEnabled;if(!effectsEnabled)hide();}
   hide();
   if(typeof chrome!=='undefined'&&chrome.storage){
-    chrome.storage.local.get(['activityEffectsEnabled','desktopActivityEffectsEnabled']).then(value=>{localEnabled=value.activityEffectsEnabled!==false;desktopEnabled=value.desktopActivityEffectsEnabled!==false;update();});
-    chrome.storage.onChanged?.addListener((changes,area)=>{if(area!=='local')return;if(changes.activityEffectsEnabled)localEnabled=changes.activityEffectsEnabled.newValue!==false;if(changes.desktopActivityEffectsEnabled)desktopEnabled=changes.desktopActivityEffectsEnabled.newValue!==false;update();});
+    chrome.storage.local.get(['activityEffectsEnabled','desktopActivityEffectsEnabled','controlPreferences']).then(value=>{localEnabled=value.activityEffectsEnabled!==false&&value.controlPreferences?.mode!=="programmatic";desktopEnabled=value.desktopActivityEffectsEnabled!==false;update();});
+    chrome.storage.onChanged?.addListener((changes,area)=>{if(area!=='local')return;if(changes.activityEffectsEnabled||changes.controlPreferences)void chrome.storage.local.get(['activityEffectsEnabled','controlPreferences']).then(v=>{localEnabled=v.activityEffectsEnabled!==false&&v.controlPreferences?.mode!=="programmatic";update();});if(changes.desktopActivityEffectsEnabled)desktopEnabled=changes.desktopActivityEffectsEnabled.newValue!==false;update();});
   }else effectsEnabled=true;
   globalThis.__gptusShowWave=()=>{
     if(!effectsEnabled)return;

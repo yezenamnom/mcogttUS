@@ -1,4 +1,4 @@
-const SOURCE_BUILD="0.12.4-use-workspace";
+const SOURCE_BUILD="0.12.4-control-modes";
 if(localStorage.getItem("gptUsSourceBuild")!==SOURCE_BUILD){
  localStorage.setItem("gptUsSourceBuild",SOURCE_BUILD);
  setTimeout(()=>chrome.runtime.reload(),150);
