@@ -205,7 +205,7 @@ function callDesktop(command, args = {}, timeoutMs = 30000) {
 }
 
 function makeMcpServer() {
-  const server = new McpServer({ name: "gpt-us-browser-desktop", version: "0.8.5" }, { instructions: instructionStore.get().text });
+  const server = new McpServer({ name: "gpt-us-browser-desktop", version: "0.9.0" }, { instructions: instructionStore.get().text });
 
   // Some ChatGPT connector hosts forward the app-qualified tool name back to
   // the MCP server (for example `gpt_us.bridge_info`) instead of stripping the
@@ -608,6 +608,11 @@ function makeMcpServer() {
 
   const optTabId = z.number().int().optional();
   const textResult = async (command,args={},timeout=20000) => ({ content:[{type:"text",text:JSON.stringify(await callBrowser(command,args,timeout),null,2)}] });
+  for(const command of ['browser_targets_list','browser_targets_clear','browser_target_add_current'])server.registerTool(command,{description:'Manage explicit multi-tab targets. Does not modify page content.',inputSchema:z.object({})},async args=>textResult(command,args));
+  server.registerTool('browser_target_add',{description:'Pin one exact browser tab as an independent target. Existing legacy pinned target is preserved.',inputSchema:z.object({tabId:z.number().int(),role:z.string().max(100).optional()})},async args=>textResult('browser_target_add',args));
+  server.registerTool('browser_target_add_by_url',{description:'Pin a tab by exact URL; reject duplicate matching tabs.',inputSchema:z.object({url:z.string().url(),role:z.string().max(100).optional()})},async args=>textResult('browser_target_add_by_url',args));
+  for(const command of ['browser_target_get','browser_target_remove','browser_target_status','browser_target_focus'])server.registerTool(command,{description:'Manage or inspect one saved targetId; never substitute another tab when unavailable.',inputSchema:z.object({targetId:z.string().min(1).max(100)})},async args=>textResult(command,args));
+  server.registerTool('browser_target_read',{description:'Read the exact saved tab as compact page data. Does not switch the legacy pinned target.',inputSchema:z.object({targetId:z.string().min(1).max(100),maxChars:z.number().int().min(1000).max(10000).default(3000)})},async args=>textResult('browser_target_command',{targetId:args.targetId,command:'get_page',args:{maxChars:args.maxChars}}));
 
   server.registerTool("bridge_info",{description:"Report extension capabilities and connection state.",inputSchema:z.object({})},async()=>textResult("bridge_info"));
   server.registerTool("get_viewport",{description:"Get viewport size, DPR, scroll position and document dimensions.",inputSchema:z.object({tabId:optTabId})},async args=>textResult("get_viewport",args));
@@ -884,7 +889,7 @@ const httpServer = http.createServer(async (req, res) => {
     res.end(JSON.stringify({
       ok: true,
       service: "comet-chatgpt-bridge",
-      version: "0.8.5",
+      version: "0.9.0",
       mcp: "ready",
       browserConnected: !!browserSocket && browserSocket.readyState === WebSocket.OPEN,
       browserConnectedAt,
@@ -897,7 +902,7 @@ const httpServer = http.createServer(async (req, res) => {
 
   if (url.pathname === "/" && req.method === "GET") {
     res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({ service: "comet-chatgpt-bridge", version: "0.8.5", status: "ok", mcp: "/mcp" }));
+    res.end(JSON.stringify({ service: "comet-chatgpt-bridge", version: "0.9.0", status: "ok", mcp: "/mcp" }));
     return;
   }
 
@@ -1171,7 +1176,7 @@ wss.on("connection", (socket, req) => {
 });
 
 httpServer.listen(PORT, "0.0.0.0", () => {
-  console.log(`Comet ChatGPT Bridge v0.8.5 listening on 0.0.0.0:${PORT}`);
+  console.log(`Comet ChatGPT Bridge v0.9.0 listening on 0.0.0.0:${PORT}`);
   console.log("MCP v2 handler ready at /mcp | WSS /browser + /desktop + /capture | health /health");
 });
 

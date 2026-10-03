@@ -1,0 +1,11 @@
+const root=document.createElement('section');root.innerHTML='<h2>GPT US · Target Workspace</h2><p>اختر عدة تبويبات كأهداف مستقلة. التبويب المغلق أو جلسة المتصفح الجديدة تحتاج اختيارًا صريحًا.</p><button id="refreshTargets">تحديث التبويبات</button> <button id="clearTargets">مسح الأهداف</button><div id="openTargets"></div><h3>الأهداف المحفوظة</h3><div id="savedTargets"></div><p id="targetStatus" role="status"></p>';document.body.append(root);
+const status=root.querySelector('#targetStatus');
+async function send(command,args={}){const response=await chrome.runtime.sendMessage({type:'target_workspace',command,args});if(!response?.ok)throw Error(response?.error||'Extension unavailable');return response.result;}
+async function refresh(){try{
+ const tabs=(await chrome.tabs.query({})).filter(t=>/^https?:/.test(t.url||''));const targets=await send('browser_targets_list');
+ const open=root.querySelector('#openTargets');open.replaceChildren();
+ for(const tab of tabs){const row=document.createElement('div'),button=document.createElement('button');button.textContent='＋ '+(tab.title||tab.url);button.disabled=targets.some(t=>t.chromeTabId===tab.id&&t.status==='CONNECTED');button.onclick=()=>send('browser_target_add',{tabId:tab.id}).then(refresh).catch(error=>status.textContent=error.message);row.append(button);open.append(row);}
+ const saved=root.querySelector('#savedTargets');saved.replaceChildren();
+ for(const target of targets){const card=document.createElement('article');card.style.cssText='border:1px solid #4389ef;border-radius:10px;margin:10px 0;padding:12px';const label=document.createElement('p');label.textContent=`${target.title} · ${target.status}\n${target.url}\n${target.targetId}`;card.append(label);for(const [text,command] of [['عرض','browser_target_focus'],['إزالة','browser_target_remove']]){const button=document.createElement('button');button.textContent=text;button.onclick=()=>send(command,{targetId:target.targetId}).then(refresh).catch(error=>status.textContent=error.message);card.append(button);}saved.append(card);}status.textContent=`${targets.length} أهداف محفوظة`;
+ }catch(error){status.textContent=error.message;}}
+root.querySelector('#refreshTargets').onclick=refresh;root.querySelector('#clearTargets').onclick=()=>send('browser_targets_clear').then(refresh).catch(error=>status.textContent=error.message);refresh();

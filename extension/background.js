@@ -1,3 +1,4 @@
+import {TargetManager,agentIndicator} from './target-manager.js';
 let ws = null;
 let reconnectTimer = null;
 let pingTimer = null;
@@ -6,6 +7,8 @@ const domState = new Map();
 const cdpAttached = new Set();
 const networkState = new Map();
 let commandQueue = Promise.resolve();
+const targetManager = new TargetManager(chrome);
+chrome.runtime.onStartup.addListener(()=>{void targetManager.invalidateSession();});
 let reconnectAttempt = 0;
 let captureActive = false;
 let captureLastError = null;
@@ -45,6 +48,11 @@ chrome.runtime.onMessage.addListener(message => {
   captureActive = !!message.active;
   chrome.action.setBadgeText({ text: captureActive ? "LIVE" : (ws?.readyState === WebSocket.OPEN ? "ON" : "OFF") });
   chrome.action.setBadgeBackgroundColor({ color: captureActive ? "#7c3aed" : (ws?.readyState === WebSocket.OPEN ? "#2e7d32" : "#9e9e9e") });
+});
+chrome.runtime.onMessage.addListener((message,sender,respond)=>{
+ if(message?.type!=='target_workspace'||sender.id!==chrome.runtime.id||!sender.url?.startsWith(chrome.runtime.getURL('')))return;
+ if(!['browser_targets_list','browser_targets_clear','browser_target_add','browser_target_add_by_url','browser_target_remove','browser_target_focus'].includes(message.command))return;
+ executeCommand(message.command,message.args||{}).then(result=>respond({ok:true,result}),error=>respond({ok:false,error:error.message}));return true;
 });
 
 function getNetworkState(tabId){
@@ -143,6 +151,7 @@ async function chooseWorkingTab(args){
  return {selected:true,tab:{id:tab.id,windowId:tab.windowId,title:tab.title,url:tab.url},session:targetSession};
 }
 async function targetTab(args={}) {
+ if(args.targetId)return targetManager.resolve(args.targetId);
  const pinned=await pinnedTab();
  if(args.tabId!==undefined){if(pinned&&pinned.id!==Number(args.tabId))throw new Error("Explicit tab differs from pinned target; select it first");return await chrome.tabs.get(Number(args.tabId));}
  if(pinned)return pinned;
@@ -732,6 +741,26 @@ function hoverTarget(selector,text) { let el=selector?document.querySelector(sel
 function selectTarget(selector,value) { const el=document.querySelector(selector); if(!el||el.tagName!=="SELECT") throw new Error("Select element not found"); el.value=value; el.dispatchEvent(new Event("change",{bubbles:true})); return {selected:true,value:el.value}; }
 
 async function executeCommand(command,args={}){
+  if(command.startsWith('browser_target')){
+   if(command==='browser_targets_list')return targetManager.list();
+   if(command==='browser_targets_clear')return targetManager.clear();
+   if(command==='browser_target_add')return targetManager.add(args);
+   if(command==='browser_target_add_by_url')return targetManager.add({url:args.url,role:args.role});
+   if(command==='browser_target_add_current'){const current=await activeTab();return targetManager.add({...args,tabId:current.id});}
+   if(command==='browser_target_get'||command==='browser_target_status')return targetManager.get(args.targetId);
+   if(command==='browser_target_remove')return targetManager.remove(args.targetId);
+   if(command==='browser_target_focus')return targetManager.focus(args.targetId);
+   if(command==='browser_target_command'){
+    const allowed=['get_page','get_viewport','element_map','dom_watch','dom_diff','accessibility_tree','layer_observe','layer_act','scroll','click','type','select','navigate','zoom'];
+    if(!allowed.includes(args.command))throw Error('Target command not allowed');
+    const tab=await targetManager.resolve(args.targetId),settings=await chrome.storage.local.get(['activityEffectsEnabled','desktopActivityEffectsEnabled']);
+    const indicate=async state=>{if(settings.activityEffectsEnabled===false||settings.desktopActivityEffectsEnabled===false)return;await chrome.scripting.executeScript({target:{tabId:tab.id},func:agentIndicator,args:[state]}).catch(()=>{});};
+    await indicate(['get_page','get_viewport','element_map','dom_watch','dom_diff','accessibility_tree','layer_observe'].includes(args.command)?'OBSERVING':'ACTING');
+    try{const result=await executeCommand(args.command,{...(args.args||{}),targetId:args.targetId,tabId:tab.id});await indicate(['get_page','get_viewport','element_map','dom_watch','dom_diff','accessibility_tree','layer_observe'].includes(args.command)?'SUCCESS':'WAITING');return {targetId:args.targetId,tabId:tab.id,executed:true,verified:false,result};}
+    catch(error){await indicate('ERROR');throw error;}
+   }
+   throw Error('Unknown target command');
+  }
   const tab=async()=>await targetTab(args);
   switch(command){
     case "select_working_tab":return await chooseWorkingTab(args);
@@ -764,7 +793,7 @@ async function executeCommand(command,args={}){
       await chrome.storage.local.set({smartActions:stored});
       return {selected:true,number,label:option.label,prompt:option.prompt};
     }
-    case "bridge_info": { const t=await activeTab().catch(()=>null);const working=await pinnedTab().catch(()=>null); return {workingTabId:working?.id||null,extensionVersion:EXT_VERSION,connected:ws?.readyState===WebSocket.OPEN,captureActive,activeTabId:t?.id||null,cdpAttached:[...cdpAttached],capabilities:["tabId","live_dom","dom_diff","deep_dom","shadow_dom","same_origin_iframes","element_map","viewport","wait_for","mouse_advanced","smooth_cursor","freehand_draw","native_mouse_path","keyboard_combo","drag_drop","zoom","parallel_actions","cdp","screenshots","browser_live_capture","system_audio","forms","click_fallback"]}; }
+    case "bridge_info": { const t=await activeTab().catch(()=>null);const working=await pinnedTab().catch(()=>null); return {workingTabId:working?.id||null,extensionVersion:EXT_VERSION,sourceBuild:"multi-target-phase1",connected:ws?.readyState===WebSocket.OPEN,captureActive,activeTabId:t?.id||null,cdpAttached:[...cdpAttached],capabilities:["multi-target","target-workspace","tabId","live_dom","dom_diff","deep_dom","shadow_dom","same_origin_iframes","element_map","viewport","wait_for","mouse_advanced","smooth_cursor","freehand_draw","native_mouse_path","keyboard_combo","drag_drop","zoom","parallel_actions","cdp","screenshots","browser_live_capture","system_audio","forms","click_fallback"]}; }
     case "browser_capture_status": return { active:captureActive, lastError:captureLastError, requiresUserGesture:!captureActive, startHint:"Click the Comet ChatGPT Bridge toolbar icon and choose a tab, window, or screen." };
     case "browser_capture_stop": await ensureOffscreenDocument(); await chrome.runtime.sendMessage({type:"capture_stop"}); captureActive=false; return {stopped:true};
     case "get_page": { const t=await tab(); const result=await runInTab(t.id,pageSnapshot,[Math.min(Math.max(Number(args.maxChars||30000),1000),100000)]); return {tabId:t.id,...result}; }
