@@ -11,8 +11,8 @@ test('instructions validate, back up, persist, detect stale saves and restore de
  try{
   const defaults=fileURLToPath(new URL('./OPERATING_RULES_AR.md',import.meta.url));
   const path=join(dir,'current.md'),store=new Instructions(defaults,path),initial=store.get();
-  assert.equal(initial.version,'1.1.4');
-  const modified=initial.text.replace('Version: 1.1.4','Version: 1.2.0')+'\nقاعدة إضافية: تحقق من الهدف.\n';
+  assert.equal(initial.version,'1.1.5');
+  const modified=initial.text.replace('Version: 1.1.5','Version: 1.2.0')+'\nقاعدة إضافية: تحقق من الهدف.\n';
   const saved=store.update(modified,initial.sha256);
   assert.equal(readFileSync(saved.backup,'utf8'),initial.text);
   assert.equal(new Instructions(defaults,path).get().version,'1.2.0');

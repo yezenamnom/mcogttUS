@@ -16,5 +16,5 @@ handle('openUse',async()=>{await use('use_open');return 'فُتح ChatGPT Use';}
 handle('captureUse',async()=>{const result=await use('use_capture');return result.active?'بدأ اللايف':'توقف اللايف';});
 handle('openUrlsButton',async()=>{await use('use_open_urls',{urls:document.getElementById('openUrls').value.split(/\s+/).filter(Boolean)});await refresh();return 'فُتحت الروابط؛ اخترها بعد تحميل الصفحات';});
 handle('groupTargets',async()=>{const result=await use('use_arrange',{targetIds:[...selected],mode:'group'});await refresh();return result.verified?'تم التحقق من مجموعة التبويبات':'المجموعة تحتاج تحققًا';});
-handle('sideTargets',async()=>{const result=await use('use_arrange',{targetIds:[...selected],mode:'side_by_side'});await refresh();return result.verified?'فُتحت نافذتان متجاورتان':'العرض يحتاج تحققًا';});
+handle('sideTargets',async()=>{const result=await use('use_arrange',{targetIds:[...selected],mode:'side_by_side'});await refresh();return result.verified?'تم التقسيم داخل النافذة نفسها':'العرض يحتاج تحققًا';});
 handle('copyContext',async()=>{const result=await use('use_prompt',{targetIds:[...selected]});await navigator.clipboard.writeText(result.prompt);return 'نُسخت مسودة سياق التبويبات للشات';});
