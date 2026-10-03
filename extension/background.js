@@ -1,4 +1,5 @@
 import {TargetManager,agentIndicator} from './target-manager.js';
+import {siteSuggestions,safeUrls,contextPrompt,arrangeTargets} from './use-workspace.js';
 let ws = null;
 let reconnectTimer = null;
 let pingTimer = null;
@@ -50,10 +51,34 @@ chrome.runtime.onMessage.addListener(message => {
   chrome.action.setBadgeBackgroundColor({ color: captureActive ? "#7c3aed" : (ws?.readyState === WebSocket.OPEN ? "#2e7d32" : "#9e9e9e") });
 });
 chrome.runtime.onMessage.addListener((message,sender,respond)=>{
+ if(message?.type==='use_workspace'&&sender.id===chrome.runtime.id&&(sender.url?.startsWith(chrome.runtime.getURL(''))||/^https:\/\/chatgpt\.com\//.test(sender.url||''))){
+  const allowed=['use_state','use_prompt','use_disable'];
+  if(sender.url?.startsWith(chrome.runtime.getURL('')))allowed.push('use_open','use_open_urls','use_arrange','use_capture');
+  if(!allowed.includes(message.command))return;
+  useWorkspace(message.command,message.args||{}).then(result=>respond({ok:true,result}),error=>respond({ok:false,error:error.message}));return true;
+ }
  if(message?.type!=='target_workspace'||sender.id!==chrome.runtime.id||!sender.url?.startsWith(chrome.runtime.getURL('')))return;
  if(!['browser_targets_list','browser_targets_clear','browser_target_add','browser_target_add_by_url','browser_target_remove','browser_target_focus'].includes(message.command))return;
  executeCommand(message.command,message.args||{}).then(result=>respond({ok:true,result}),error=>respond({ok:false,error:error.message}));return true;
 });
+async function useWorkspace(command,args={}){
+ if(command==='use_state'){const targets=await targetManager.list();return {targets,suggestions:targets.filter(t=>t.status==='CONNECTED').map(t=>({targetId:t.targetId,title:t.title,items:siteSuggestions(t.url)}))};}
+ if(command==='use_disable'){await chrome.storage.local.set({useEnabled:false});return {disabled:true};}
+ if(command==='use_open'){
+  await chrome.storage.local.set({useEnabled:true});const tab=await chrome.tabs.create({url:'https://chatgpt.com/#gpt-us-use',active:true});return {opened:true,tabId:tab.id};
+ }
+ if(command==='use_capture'){await toggleBrowserCapture(await activeTab());return {active:captureActive};}
+ if(command==='use_open_urls'){
+  const urls=safeUrls(args.urls),results=[];for(const url of urls){const tab=await chrome.tabs.create({url,active:false});results.push({tabId:tab.id,url});}return {opened:results};
+ }
+ const ids=args.targetIds;if(!Array.isArray(ids)||!ids.length||ids.length>8||new Set(ids).size!==ids.length)throw Error('اختر من هدف واحد إلى 8 أهداف مختلفة');
+ const targets=await Promise.all(ids.map(id=>targetManager.get(id)));
+ if(command==='use_prompt')return {prompt:contextPrompt(targets,String(args.question||'افحص التبويبات المختارة معًا واقترح خطوات عملية.').slice(0,2000))};
+ if(command==='use_arrange'){const tabs=await Promise.all(ids.map(id=>targetManager.resolve(id)));return arrangeTargets(chrome,tabs,args.mode);}
+ throw Error('Unknown Use command');
+}
+async function injectUse(tabId,url){if(!/^https:\/\/chatgpt\.com\//.test(url||''))return;const {useEnabled}=await chrome.storage.local.get('useEnabled');if(useEnabled)await chrome.scripting.executeScript({target:{tabId},files:['use-skin.js']}).catch(()=>{});}
+chrome.tabs.onUpdated.addListener((tabId,change,tab)=>{if(change.status==='complete')void injectUse(tabId,tab.url);});
 
 function getNetworkState(tabId){
   if(!networkState.has(tabId)) networkState.set(tabId,{order:[],byId:new Map()});
@@ -741,6 +766,11 @@ function hoverTarget(selector,text) { let el=selector?document.querySelector(sel
 function selectTarget(selector,value) { const el=document.querySelector(selector); if(!el||el.tagName!=="SELECT") throw new Error("Select element not found"); el.value=value; el.dispatchEvent(new Event("change",{bubbles:true})); return {selected:true,value:el.value}; }
 
 async function executeCommand(command,args={}){
+  if(command==='browser_use_open')return useWorkspace('use_open');
+  if(command==='browser_workspace_open_urls')return useWorkspace('use_open_urls',args);
+  if(command==='browser_workspace_context')return useWorkspace('use_prompt',args);
+  if(command==='browser_workspace_arrange')return useWorkspace('use_arrange',args);
+  if(command==='browser_workspace_suggestions')return useWorkspace('use_state',{});
   if(command.startsWith('browser_target')){
    if(command==='browser_targets_list')return targetManager.list();
    if(command==='browser_targets_clear')return targetManager.clear();
@@ -753,8 +783,8 @@ async function executeCommand(command,args={}){
    if(command==='browser_target_command'){
     const allowed=['get_page','get_viewport','element_map','dom_watch','dom_diff','accessibility_tree','layer_observe','layer_act','scroll','click','type','select','navigate','zoom'];
     if(!allowed.includes(args.command))throw Error('Target command not allowed');
-    const tab=await targetManager.resolve(args.targetId),settings=await chrome.storage.local.get(['activityEffectsEnabled','desktopActivityEffectsEnabled']);
-    const indicate=async state=>{if(settings.activityEffectsEnabled===false||settings.desktopActivityEffectsEnabled===false)return;await chrome.scripting.executeScript({target:{tabId:tab.id},func:agentIndicator,args:[state]}).catch(()=>{});};
+    const tab=await targetManager.resolve(args.targetId),settings=await chrome.storage.local.get(['blueAgentEffectsEnabled']);
+    const indicate=async state=>{if(settings.blueAgentEffectsEnabled===false)return;await chrome.scripting.executeScript({target:{tabId:tab.id},func:agentIndicator,args:[state]}).catch(()=>{});};
     await indicate(['get_page','get_viewport','element_map','dom_watch','dom_diff','accessibility_tree','layer_observe'].includes(args.command)?'OBSERVING':'ACTING');
     try{const result=await executeCommand(args.command,{...(args.args||{}),targetId:args.targetId,tabId:tab.id});await indicate(['get_page','get_viewport','element_map','dom_watch','dom_diff','accessibility_tree','layer_observe'].includes(args.command)?'SUCCESS':'WAITING');return {targetId:args.targetId,tabId:tab.id,executed:true,verified:false,result};}
     catch(error){await indicate('ERROR');throw error;}
@@ -793,7 +823,7 @@ async function executeCommand(command,args={}){
       await chrome.storage.local.set({smartActions:stored});
       return {selected:true,number,label:option.label,prompt:option.prompt};
     }
-    case "bridge_info": { const t=await activeTab().catch(()=>null);const working=await pinnedTab().catch(()=>null); return {workingTabId:working?.id||null,extensionVersion:EXT_VERSION,sourceBuild:"multi-target-phase1",connected:ws?.readyState===WebSocket.OPEN,captureActive,activeTabId:t?.id||null,cdpAttached:[...cdpAttached],capabilities:["multi-target","target-workspace","tabId","live_dom","dom_diff","deep_dom","shadow_dom","same_origin_iframes","element_map","viewport","wait_for","mouse_advanced","smooth_cursor","freehand_draw","native_mouse_path","keyboard_combo","drag_drop","zoom","parallel_actions","cdp","screenshots","browser_live_capture","system_audio","forms","click_fallback"]}; }
+    case "bridge_info": { const t=await activeTab().catch(()=>null);const working=await pinnedTab().catch(()=>null); return {workingTabId:working?.id||null,extensionVersion:EXT_VERSION,sourceBuild:"use-workspace",connected:ws?.readyState===WebSocket.OPEN,captureActive,activeTabId:t?.id||null,cdpAttached:[...cdpAttached],capabilities:["multi-target","target-workspace","tabId","live_dom","dom_diff","deep_dom","shadow_dom","same_origin_iframes","element_map","viewport","wait_for","mouse_advanced","smooth_cursor","freehand_draw","native_mouse_path","keyboard_combo","drag_drop","zoom","parallel_actions","cdp","screenshots","browser_live_capture","system_audio","forms","click_fallback"]}; }
     case "browser_capture_status": return { active:captureActive, lastError:captureLastError, requiresUserGesture:!captureActive, startHint:"Click the Comet ChatGPT Bridge toolbar icon and choose a tab, window, or screen." };
     case "browser_capture_stop": await ensureOffscreenDocument(); await chrome.runtime.sendMessage({type:"capture_stop"}); captureActive=false; return {stopped:true};
     case "get_page": { const t=await tab(); const result=await runInTab(t.id,pageSnapshot,[Math.min(Math.max(Number(args.maxChars||30000),1000),100000)]); return {tabId:t.id,...result}; }
@@ -858,9 +888,12 @@ chrome.storage.onChanged.addListener((changes, areaName)=>{
   ws = null;
   setTimeout(connect, 300);
 });
-chrome.action.onClicked.addListener(tab=>toggleBrowserCapture(tab).catch(error=>{
+chrome.action.onClicked.addListener(()=>chrome.runtime.openOptionsPage().catch(error=>{
   captureLastError = String(error?.message || error);
   chrome.action.setBadgeText({text:"ERR"}); chrome.action.setBadgeBackgroundColor({color:"#c62828"});
   console.error("GPT US capture:",error);
 }));
 connect();
+
+chrome.storage.onChanged.addListener((changes,area)=>{if(area==='local'&&changes.blueAgentEffectsEnabled?.newValue===false){void targetManager.list().then(targets=>Promise.all(targets.filter(t=>t.status==='CONNECTED').map(t=>chrome.scripting.executeScript({target:{tabId:t.chromeTabId},func:agentIndicator,args:['IDLE']}).catch(()=>{}))));}});
+void chrome.tabs.query({url:'https://chatgpt.com/*'}).then(tabs=>Promise.all(tabs.map(t=>injectUse(t.id,t.url))));

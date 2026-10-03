@@ -205,7 +205,7 @@ function callDesktop(command, args = {}, timeoutMs = 30000) {
 }
 
 function makeMcpServer() {
-  const server = new McpServer({ name: "gpt-us-browser-desktop", version: "0.9.0" }, { instructions: instructionStore.get().text });
+  const server = new McpServer({ name: "gpt-us-browser-desktop", version: "0.9.1" }, { instructions: instructionStore.get().text });
 
   // Some ChatGPT connector hosts forward the app-qualified tool name back to
   // the MCP server (for example `gpt_us.bridge_info`) instead of stripping the
@@ -608,6 +608,11 @@ function makeMcpServer() {
 
   const optTabId = z.number().int().optional();
   const textResult = async (command,args={},timeout=20000) => ({ content:[{type:"text",text:JSON.stringify(await callBrowser(command,args,timeout),null,2)}] });
+  server.registerTool('browser_use_open',{description:'Open a user-requested ChatGPT Use tab with local GPT US customization. Preserves ChatGPT account and subscription; does not send a message.',inputSchema:z.object({})},async()=>textResult('browser_use_open',{}));
+  server.registerTool('browser_workspace_open_urls',{description:'Open 1–8 explicitly requested HTTP(S) URLs in browser tabs. Returns exact tabIds; pin them using browser_target_add after loading.',inputSchema:z.object({urls:z.array(z.string().url()).min(1).max(8)})},async args=>textResult('browser_workspace_open_urls',args));
+  server.registerTool('browser_workspace_context',{description:'Prepare a draft question referencing selected targetIds. Does not send a ChatGPT message.',inputSchema:z.object({targetIds:z.array(z.string()).min(1).max(8),question:z.string().max(2000).optional()})},async args=>textResult('browser_workspace_context',args));
+  server.registerTool('browser_workspace_arrange',{description:'Group selected tabs in one browser window or move exactly two targets into adjacent browser windows. Only for explicitly requested layout changes; returns observed tab placement.',inputSchema:z.object({targetIds:z.array(z.string()).min(2).max(8),mode:z.enum(['group','side_by_side'])})},async args=>textResult('browser_workspace_arrange',args));
+  server.registerTool('browser_workspace_suggestions',{description:'Read selected-target metadata and GPT US site-based prompt suggestions. These are preset suggestions, not an AI evaluation of the page.',inputSchema:z.object({})},async()=>textResult('browser_workspace_suggestions',{}));
   for(const command of ['browser_targets_list','browser_targets_clear','browser_target_add_current'])server.registerTool(command,{description:'Manage explicit multi-tab targets. Does not modify page content.',inputSchema:z.object({})},async args=>textResult(command,args));
   server.registerTool('browser_target_add',{description:'Pin one exact browser tab as an independent target. Existing legacy pinned target is preserved.',inputSchema:z.object({tabId:z.number().int(),role:z.string().max(100).optional()})},async args=>textResult('browser_target_add',args));
   server.registerTool('browser_target_add_by_url',{description:'Pin a tab by exact URL; reject duplicate matching tabs.',inputSchema:z.object({url:z.string().url(),role:z.string().max(100).optional()})},async args=>textResult('browser_target_add_by_url',args));
@@ -889,7 +894,7 @@ const httpServer = http.createServer(async (req, res) => {
     res.end(JSON.stringify({
       ok: true,
       service: "comet-chatgpt-bridge",
-      version: "0.9.0",
+      version: "0.9.1",
       mcp: "ready",
       browserConnected: !!browserSocket && browserSocket.readyState === WebSocket.OPEN,
       browserConnectedAt,
@@ -902,7 +907,7 @@ const httpServer = http.createServer(async (req, res) => {
 
   if (url.pathname === "/" && req.method === "GET") {
     res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({ service: "comet-chatgpt-bridge", version: "0.9.0", status: "ok", mcp: "/mcp" }));
+    res.end(JSON.stringify({ service: "comet-chatgpt-bridge", version: "0.9.1", status: "ok", mcp: "/mcp" }));
     return;
   }
 
@@ -1176,7 +1181,7 @@ wss.on("connection", (socket, req) => {
 });
 
 httpServer.listen(PORT, "0.0.0.0", () => {
-  console.log(`Comet ChatGPT Bridge v0.9.0 listening on 0.0.0.0:${PORT}`);
+  console.log(`Comet ChatGPT Bridge v0.9.1 listening on 0.0.0.0:${PORT}`);
   console.log("MCP v2 handler ready at /mcp | WSS /browser + /desktop + /capture | health /health");
 });
 
